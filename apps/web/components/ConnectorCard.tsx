@@ -1,16 +1,23 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type DragEvent } from "react";
 import type { ConnectorDefinition } from "@/lib/connectors";
 
 interface Props {
   connector: ConnectorDefinition;
 }
 
+const DROP_ERROR_MESSAGES: Record<string, string> = {
+  "invalid-shortcut": "לא הצלחתי לקרוא את קיצור הדרך הזה - נסה לגרור ישירות את קובץ ה-exe.",
+  "target-not-found": "הקובץ שאליו הקיצור מצביע לא נמצא.",
+};
+
 export function ConnectorCard({ connector }: Props) {
   const [isElectron, setIsElectron] = useState(false);
   const [chosenPath, setChosenPath] = useState<string | null>(null);
   const [launchError, setLaunchError] = useState<string | null>(null);
+  const [dropError, setDropError] = useState<string | null>(null);
+  const [isDraggingOver, setIsDraggingOver] = useState(false);
 
   useEffect(() => {
     // window.electronAPI קיים רק בתוך אפליקציית ה-Desktop (preload), לעולם לא ב-SSR/דפדפן רגיל.
@@ -36,6 +43,35 @@ export function ConnectorCard({ connector }: Props) {
     if (!result.success) setLaunchError(result.error ?? "שגיאה לא ידועה");
   }
 
+  function handleDragOver(e: DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+    setIsDraggingOver(true);
+  }
+
+  function handleDragLeave() {
+    setIsDraggingOver(false);
+  }
+
+  async function handleDrop(e: DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+    setIsDraggingOver(false);
+    setDropError(null);
+    if (!window.electronAPI) return;
+
+    const file = e.dataTransfer.files[0];
+    // ב-Electron, אובייקט File שנגרר נושא גם path מוחלט במערכת הקבצים - הרחבה
+    // ייחודית ל-Electron שלא קיימת ב-DOM הסטנדרטי, ולכן ה-cast.
+    const droppedPath = (file as File & { path?: string })?.path;
+    if (!droppedPath) return;
+
+    const result = await window.electronAPI.resolveDroppedPath(connector.id, droppedPath);
+    if (result.success && result.path) {
+      setChosenPath(result.path);
+    } else {
+      setDropError(DROP_ERROR_MESSAGES[result.error ?? ""] ?? "לא הצלחתי לזהות את התוכנה מהקובץ שנגרר.");
+    }
+  }
+
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm flex flex-col gap-4">
       <div>
@@ -45,18 +81,32 @@ export function ConnectorCard({ connector }: Props) {
 
       {isElectron ? (
         <div className="flex flex-col gap-2">
+          <div
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+            className={`rounded-lg border-2 border-dashed p-3 text-center text-xs transition-colors ${
+              isDraggingOver
+                ? "border-indigo-400 bg-indigo-50 text-indigo-700"
+                : "border-slate-200 text-slate-400"
+            }`}
+          >
+            גרור לכאן את קיצור הדרך או קובץ ה-exe של {connector.name}
+          </div>
+
           <button
             type="button"
             onClick={handlePickExecutable}
             className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-600 hover:border-slate-300"
           >
-            {chosenPath ? "שנה בחירה" : "בחר תוכנה"}
+            {chosenPath ? "שנה בחירה" : "או בחר תוכנה מהתיקייה"}
           </button>
           {chosenPath && (
             <p className="truncate text-xs text-slate-400" dir="ltr" title={chosenPath}>
               {chosenPath}
             </p>
           )}
+          {dropError && <p className="text-xs text-red-600">{dropError}</p>}
           <button
             type="button"
             onClick={handleLaunch}

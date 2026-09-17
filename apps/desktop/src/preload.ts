@@ -65,6 +65,12 @@ export interface RunTaskResult {
   error?: "task-already-running" | "no-api-key";
 }
 
+export interface ResolveDroppedPathResult {
+  success: boolean;
+  path?: string;
+  error?: "invalid-shortcut" | "target-not-found";
+}
+
 const electronAPI = {
   isElectron: true as const,
 
@@ -74,6 +80,8 @@ const electronAPI = {
     ipcRenderer.invoke("aiop:pick-executable", connectorId),
   launchExecutable: (connectorId: string): Promise<LaunchResult> =>
     ipcRenderer.invoke("aiop:launch-executable", connectorId),
+  resolveDroppedPath: (connectorId: string, droppedPath: string): Promise<ResolveDroppedPathResult> =>
+    ipcRenderer.invoke("aiop:resolve-dropped-path", connectorId, droppedPath),
 
   getXaiKeyStatus: (): Promise<boolean> => ipcRenderer.invoke("aiop:get-xai-key-status"),
   saveXaiKey: (key: string): Promise<boolean> => ipcRenderer.invoke("aiop:save-xai-key", key),

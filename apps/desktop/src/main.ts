@@ -46,6 +46,12 @@ function writeConnectorPaths(data: Record<string, string>): void {
   fs.writeFileSync(connectorPathsFile(), JSON.stringify(data, null, 2), "utf-8");
 }
 
+function saveConnectorTarget(connectorId: string, target: string): void {
+  const current = readConnectorPaths();
+  current[connectorId] = target;
+  writeConnectorPaths(current);
+}
+
 function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
     width: 1280,
@@ -169,11 +175,27 @@ app.whenReady().then(() => {
 
     if (result.canceled || result.filePaths.length === 0) return null;
 
-    const chosenPath = result.filePaths[0];
-    const current = readConnectorPaths();
-    current[connectorId] = chosenPath;
-    writeConnectorPaths(current);
-    return chosenPath;
+    saveConnectorTarget(connectorId, result.filePaths[0]);
+    return result.filePaths[0];
+  });
+
+  ipcMain.handle("aiop:resolve-dropped-path", (_event, connectorId: string, droppedPath: string) => {
+    // קיצורי דרך על שולחן העבודה (.lnk) לא מצביעים בעצמם על קובץ הפעלה - צריך
+    // לפתור אותם ליעד האמיתי. שם הקיצור יכול להיות שונה לגמרי מהשם המסחרי של
+    // התוכנה, אבל היעד עצמו תמיד מדויק - בדיוק למה גרירה פותרת את הבעיה הזו.
+    let target = droppedPath;
+    if (process.platform === "win32" && droppedPath.toLowerCase().endsWith(".lnk")) {
+      try {
+        target = shell.readShortcutLink(droppedPath).target;
+      } catch {
+        return { success: false, error: "invalid-shortcut" as const };
+      }
+    }
+    if (!target || !fs.existsSync(target) || fs.statSync(target).isDirectory()) {
+      return { success: false, error: "target-not-found" as const };
+    }
+    saveConnectorTarget(connectorId, target);
+    return { success: true, path: target };
   });
 
   ipcMain.handle("aiop:launch-executable", async (_event, connectorId: string) => {

@@ -65,11 +65,18 @@ interface RunTaskResult {
   error?: "task-already-running" | "no-api-key";
 }
 
+interface ResolveDroppedPathResult {
+  success: boolean;
+  path?: string;
+  error?: "invalid-shortcut" | "target-not-found";
+}
+
 interface ElectronAPI {
   isElectron: true;
   getConnectorPaths(): Promise<Record<string, string>>;
   pickExecutable(connectorId: string): Promise<string | null>;
   launchExecutable(connectorId: string): Promise<LaunchResult>;
+  resolveDroppedPath(connectorId: string, droppedPath: string): Promise<ResolveDroppedPathResult>;
 
   getXaiKeyStatus(): Promise<boolean>;
   saveXaiKey(key: string): Promise<boolean>;
