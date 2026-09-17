@@ -1,4 +1,4 @@
-const RELEASES_URL = "https://github.com/jakobaror-wq/accountant-ai-operator/releases/latest";
+import { DESKTOP_APP_DOWNLOAD_URL } from "@/lib/desktop-app";
 
 export const metadata = {
   title: "הורדת אפליקציית שולחן העבודה | Accountant AI Operator",
@@ -15,9 +15,7 @@ export default function DownloadPage() {
       </p>
 
       <a
-        href={RELEASES_URL}
-        target="_blank"
-        rel="noopener noreferrer"
+        href={DESKTOP_APP_DOWNLOAD_URL}
         className="mt-6 inline-flex items-center justify-center rounded-lg bg-indigo-600 px-6 py-3 text-sm font-medium text-white hover:bg-indigo-700"
       >
         להורדת ההתקנה (Windows)
@@ -25,8 +23,8 @@ export default function DownloadPage() {
 
       <ol className="mt-8 flex flex-col gap-3 text-sm text-slate-700">
         <li>
-          <strong>1.</strong> לוחצים על הכפתור למעלה, ובעמוד ה-Releases שנפתח מורידים את קובץ
-          ה-<code dir="ltr">.exe</code> העדכני ביותר.
+          <strong>1.</strong> לוחצים על הכפתור למעלה - קובץ ה-<code dir="ltr">.exe</code> העדכני
+          ביותר יורד ישירות.
         </li>
         <li>
           <strong>2.</strong> מריצים את קובץ ההתקנה - זה יוצר קיצור דרך על שולחן העבודה עם הלוגו

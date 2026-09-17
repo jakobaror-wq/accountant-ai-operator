@@ -28,6 +28,23 @@ jobs:
 
       - run: npm run dist:win
 
+      - name: Upload installer to Supabase Storage (stable, own-domain download URL)
+        shell: pwsh
+        working-directory: apps/desktop
+        env:
+          SUPABASE_ANON_KEY: sb_publishable_FlEiYeqQCvU7QIu2FSXuPQ_cJ1vfD4k
+        run: |
+          $file = Get-ChildItem -Path "release" -Filter "*.exe" | Select-Object -First 1
+          if (-not $file) { throw "No .exe found in release/" }
+          Write-Host "Uploading $($file.FullName) ($($file.Length) bytes)"
+          curl.exe -sS --fail -X POST `
+            "https://sngjrtuhpuclkbalduzs.supabase.co/storage/v1/object/desktop-app/latest/AccountantAIOperatorSetup.exe" `
+            -H "apikey: $env:SUPABASE_ANON_KEY" `
+            -H "Authorization: Bearer $env:SUPABASE_ANON_KEY" `
+            -H "x-upsert: true" `
+            -H "Content-Type: application/x-msdos-program" `
+            --data-binary "@$($file.FullName)"
+
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: desktop-${{ github.run_number }}

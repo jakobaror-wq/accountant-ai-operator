@@ -1,5 +1,3 @@
-export type ConnectionType = "browser" | "desktop";
-
 export interface ConnectorDefinition {
   id: string;
   name: string;
@@ -7,8 +5,9 @@ export interface ConnectorDefinition {
 }
 
 /**
- * ארבע התוכנות מתוך ה-PRD. לא ידוע עדיין אם כל אחת היא Web או Desktop -
- * זו החלטה שהמשרד קובע בעצמו במסך ההגדרות של כל חיבור (ר' docs/07-ASSUMPTIONS-OPEN-QUESTIONS.md).
+ * ארבע התוכנות מתוך ה-PRD. כולן תוכנות שולחן-עבודה מקומיות - החיבור אליהן
+ * הוא תמיד לוקאלי (בחירת קובץ ה-exe פעם אחת בתוך אפליקציית שולחן העבודה),
+ * אין עוד אופציה לחיבור דרך דפדפן/קישור אינטרנט.
  */
 export const CONNECTORS: ConnectorDefinition[] = [
   {
