@@ -28,30 +28,6 @@ jobs:
 
       - run: npm run dist:win
 
-      - name: Upload installer to Supabase Storage (stable, own-domain download URL)
-        shell: pwsh
-        working-directory: apps/desktop
-        env:
-          # ה-JWT הישן (legacy anon key) - ה-Storage REST API דורש JWT תקין
-          # ב-apikey/Authorization; מפתח ה-"sb_publishable_..." החדש (בשימוש
-          # בקוד ה-client) לא התקבל שם והחזיר 400.
-          SUPABASE_ANON_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNuZ2pydHVocHVjbGtiYWxkdXpzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk2NTk5NTEsImV4cCI6MjEwNTIzNTk1MX0.fy8jUBQx6B6epjAPPiGVcW-QXxYBdE4C1C4s_FvdLoA
-        run: |
-          $file = Get-ChildItem -Path "release" -Filter "*.exe" | Select-Object -First 1
-          if (-not $file) { throw "No .exe found in release/" }
-          Write-Host "Uploading $($file.FullName) ($($file.Length) bytes)"
-          curl.exe -sS -w "`nHTTP %{http_code}`n" -X POST `
-            "https://sngjrtuhpuclkbalduzs.supabase.co/storage/v1/object/desktop-app/latest/AccountantAIOperatorSetup.exe" `
-            -H "apikey: $env:SUPABASE_ANON_KEY" `
-            -H "Authorization: Bearer $env:SUPABASE_ANON_KEY" `
-            -H "x-upsert: true" `
-            -H "Content-Type: application/x-msdos-program" `
-            --data-binary "@$($file.FullName)" `
-            -o upload-response.json
-          Get-Content upload-response.json
-          $response = Get-Content upload-response.json -Raw | ConvertFrom-Json
-          if ($response.Key -eq $null -and $response.error) { throw "Upload failed: $($response.message)" }
-
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: desktop-${{ github.run_number }}
