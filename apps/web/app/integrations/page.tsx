@@ -1,29 +1,23 @@
 import { CONNECTORS } from "@/lib/connectors";
 import { ConnectorCard } from "@/components/ConnectorCard";
-import { createClient } from "@/lib/supabase/server";
-import { getCurrentOfficeId } from "@/lib/office";
+import { getSupabase } from "@/lib/supabase";
+import { DEFAULT_OFFICE_ID } from "@/lib/default-office";
 import type { ConnectorConfig } from "@/lib/connector-configs-client";
 
 export const metadata = {
   title: "מרכז אינטגרציות | Accountant AI Operator",
 };
 
+// חובה - הדף קורא מ-Supabase בכל טעינה; בלי זה Next יקפיא אותו כ-snapshot
+// סטטי מזמן ה-build ולא ישקף עדכונים שנשמרו לאחר מכן.
+export const dynamic = "force-dynamic";
+
 export default async function IntegrationsPage() {
-  const officeId = await getCurrentOfficeId();
-
-  if (!officeId) {
-    return (
-      <main className="mx-auto w-full max-w-lg flex-1 px-6 py-10 text-center text-sm text-slate-600">
-        לא נמצא משרד משויך למשתמש. נסה/י להתחבר מחדש.
-      </main>
-    );
-  }
-
-  const supabase = await createClient();
+  const supabase = getSupabase();
   const { data } = await supabase
     .from("connector_configs")
     .select("connector_id, connection_type, url")
-    .eq("office_id", officeId);
+    .eq("office_id", DEFAULT_OFFICE_ID);
 
   const configByConnectorId = new Map<string, ConnectorConfig>(
     (data ?? []).map((row) => [
@@ -48,7 +42,7 @@ export default async function IntegrationsPage() {
           <ConnectorCard
             key={connector.id}
             connector={connector}
-            officeId={officeId}
+            officeId={DEFAULT_OFFICE_ID}
             initialConfig={configByConnectorId.get(connector.id) ?? { type: null }}
           />
         ))}

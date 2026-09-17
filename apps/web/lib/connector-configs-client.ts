@@ -1,6 +1,6 @@
 "use client";
 
-import { createClient } from "./supabase/client";
+import { getSupabase } from "./supabase";
 import type { ConnectionType } from "./connectors";
 
 export interface ConnectorConfig {
@@ -13,7 +13,7 @@ export async function saveConnectorConfig(
   connectorId: string,
   config: ConnectorConfig,
 ): Promise<void> {
-  const supabase = createClient();
+  const supabase = getSupabase();
   const { error } = await supabase.from("connector_configs").upsert(
     {
       office_id: officeId,
