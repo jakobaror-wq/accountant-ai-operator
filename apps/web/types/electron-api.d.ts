@@ -35,10 +35,11 @@ interface LearnedScreen {
 }
 
 interface RunRecord {
+  connectorId: string;
   task: string;
   startedAt: string;
   finishedAt: string;
-  status: "done" | "stopped" | "rejected" | "error" | "max-steps-reached";
+  status: "in-progress" | "done" | "stopped" | "rejected" | "error" | "max-steps-reached";
   summary?: string;
   steps: RunStepRecord[];
 }
@@ -74,12 +75,13 @@ interface ElectronAPI {
   saveXaiKey(key: string): Promise<boolean>;
   clearXaiKey(): Promise<boolean>;
 
-  runTask(task: string, connectorId: string): Promise<RunTaskResult>;
+  runTask(task: string, connectorId: string, resumeRunId?: string): Promise<RunTaskResult>;
   stopTask(): Promise<boolean>;
   approveAction(): Promise<boolean>;
   rejectAction(): Promise<boolean>;
   listRuns(): Promise<StoredRunRecord[]>;
   getLearnedScreens(connectorId: string): Promise<LearnedScreen[]>;
+  getIncompleteRun(connectorId: string): Promise<StoredRunRecord | null>;
   onTaskUpdate(callback: (event: TaskUpdateEvent) => void): () => void;
 }
 

@@ -35,10 +35,11 @@ export interface LearnedScreen {
 }
 
 export interface RunRecord {
+  connectorId: string;
   task: string;
   startedAt: string;
   finishedAt: string;
-  status: "done" | "stopped" | "rejected" | "error" | "max-steps-reached";
+  status: "in-progress" | "done" | "stopped" | "rejected" | "error" | "max-steps-reached";
   summary?: string;
   steps: RunStepRecord[];
 }
@@ -78,14 +79,16 @@ const electronAPI = {
   saveXaiKey: (key: string): Promise<boolean> => ipcRenderer.invoke("aiop:save-xai-key", key),
   clearXaiKey: (): Promise<boolean> => ipcRenderer.invoke("aiop:clear-xai-key"),
 
-  runTask: (task: string, connectorId: string): Promise<RunTaskResult> =>
-    ipcRenderer.invoke("aiop:run-task", task, connectorId),
+  runTask: (task: string, connectorId: string, resumeRunId?: string): Promise<RunTaskResult> =>
+    ipcRenderer.invoke("aiop:run-task", task, connectorId, resumeRunId),
   stopTask: (): Promise<boolean> => ipcRenderer.invoke("aiop:stop-task"),
   approveAction: (): Promise<boolean> => ipcRenderer.invoke("aiop:approve-action"),
   rejectAction: (): Promise<boolean> => ipcRenderer.invoke("aiop:reject-action"),
   listRuns: (): Promise<StoredRunRecord[]> => ipcRenderer.invoke("aiop:list-runs"),
   getLearnedScreens: (connectorId: string): Promise<LearnedScreen[]> =>
     ipcRenderer.invoke("aiop:get-learned-screens", connectorId),
+  getIncompleteRun: (connectorId: string): Promise<StoredRunRecord | null> =>
+    ipcRenderer.invoke("aiop:get-incomplete-run", connectorId),
   onTaskUpdate: (callback: (event: TaskUpdateEvent) => void): (() => void) => {
     const handler = (_event: unknown, data: TaskUpdateEvent) => callback(data);
     ipcRenderer.on("aiop:task-update", handler);

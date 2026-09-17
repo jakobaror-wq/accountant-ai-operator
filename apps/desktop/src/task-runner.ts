@@ -14,10 +14,11 @@ export interface RunStepRecord {
 }
 
 export interface RunRecord {
+  connectorId: string;
   task: string;
   startedAt: string;
   finishedAt: string;
-  status: "done" | "stopped" | "rejected" | "error" | "max-steps-reached";
+  status: "in-progress" | "done" | "stopped" | "rejected" | "error" | "max-steps-reached";
   summary?: string;
   steps: RunStepRecord[];
 }
@@ -40,23 +41,39 @@ const STEP_PAUSE_MS = 500;
 export async function runComputerUseTask(params: {
   apiKey: string;
   task: string;
+  connectorId: string;
   knownScreens: string[];
   onUpdate: (event: TaskUpdateEvent) => void;
   shouldStop: () => boolean;
   waitForApproval: (step: number, reasoning: string, action: HistoryEntry["action"]) => Promise<boolean>;
+  /** ממשיכים ריצה שהופסקה (קריסה/סגירה) במקום להתחיל מאפס ולסכן פעולה כפולה. */
+  resumeFrom?: { startedAt: string; steps: RunStepRecord[] };
 }): Promise<void> {
-  const history: HistoryEntry[] = [];
-  const steps: RunStepRecord[] = [];
-  const startedAt = new Date().toISOString();
+  const history: HistoryEntry[] = (params.resumeFrom?.steps ?? [])
+    .filter((s) => (s.outcome === "executed" || s.outcome === "done") && s.reasoning && s.action)
+    .map((s) => ({ reasoning: s.reasoning as string, action: s.action as HistoryEntry["action"] }));
+  const steps: RunStepRecord[] = params.resumeFrom ? [...params.resumeFrom.steps] : [];
+  const startedAt = params.resumeFrom?.startedAt ?? new Date().toISOString();
+  const startStep = steps.length + 1;
 
   function finish(status: RunRecord["status"], summary?: string): void {
     params.onUpdate({
       type: "run-summary",
-      run: { task: params.task, startedAt, finishedAt: new Date().toISOString(), status, summary, steps },
+      run: {
+        connectorId: params.connectorId,
+        task: params.task,
+        startedAt,
+        finishedAt: new Date().toISOString(),
+        status,
+        summary,
+        steps,
+      },
     });
   }
 
-  for (let step = 1; step <= MAX_STEPS; step++) {
+  const checkpoint = () => finish("in-progress");
+
+  for (let step = startStep; step <= MAX_STEPS; step++) {
     if (params.shouldStop()) {
       params.onUpdate({ type: "stopped" });
       finish("stopped");
@@ -179,6 +196,7 @@ export async function runComputerUseTask(params: {
       decision: next.requiresApproval ? "approved" : undefined,
       outcome: "executed",
     });
+    checkpoint();
 
     history.push({ reasoning: next.reasoning, action: next.action });
     await new Promise((resolve) => setTimeout(resolve, STEP_PAUSE_MS));

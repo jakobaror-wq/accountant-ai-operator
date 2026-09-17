@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 type RunSummary = Awaited<ReturnType<NonNullable<Window["electronAPI"]>["listRuns"]>>[number];
 
 const STATUS_LABELS: Record<RunSummary["status"], string> = {
+  "in-progress": "לא הושלמה (הופסקה)",
   done: "הושלם",
   stopped: "נעצר",
   rejected: "נדחה",
@@ -13,6 +14,7 @@ const STATUS_LABELS: Record<RunSummary["status"], string> = {
 };
 
 const STATUS_COLORS: Record<RunSummary["status"], string> = {
+  "in-progress": "text-amber-700",
   done: "text-emerald-700",
   stopped: "text-slate-500",
   rejected: "text-red-600",

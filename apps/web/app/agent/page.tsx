@@ -17,6 +17,8 @@ interface PendingApproval {
   actionLabel: string;
 }
 
+type StoredRunRecord = NonNullable<Awaited<ReturnType<NonNullable<Window["electronAPI"]>["getIncompleteRun"]>>>;
+
 function describeAction(action: { type: string } & Record<string, unknown>): string {
   switch (action.type) {
     case "click":
@@ -49,6 +51,7 @@ export default function AgentPage() {
   const [latestScreenshot, setLatestScreenshot] = useState<string | null>(null);
   const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null);
   const [historyRefresh, setHistoryRefresh] = useState(0);
+  const [incompleteRun, setIncompleteRun] = useState<StoredRunRecord | null>(null);
   const logEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -125,6 +128,11 @@ export default function AgentPage() {
     window.electronAPI.getLearnedScreens(connectorId).then((screens) => setLearnedScreenCount(screens.length));
   }, [connectorId, historyRefresh]);
 
+  useEffect(() => {
+    if (!window.electronAPI || !connectorId || running) return;
+    window.electronAPI.getIncompleteRun(connectorId).then(setIncompleteRun);
+  }, [connectorId, running, historyRefresh]);
+
   async function handleSaveKey() {
     if (!window.electronAPI || !keyInput.trim()) return;
     setSavingKey(true);
@@ -152,6 +160,7 @@ export default function AgentPage() {
     setLog([]);
     setLatestScreenshot(null);
     setPendingApproval(null);
+    setIncompleteRun(null);
     const result = await window.electronAPI.runTask(task.trim(), connectorId);
     if (result.started) {
       setRunning(true);
@@ -164,6 +173,17 @@ export default function AgentPage() {
         },
       ]);
     }
+  }
+
+  async function handleResume() {
+    if (!window.electronAPI || !incompleteRun || !connectorId) return;
+    setLog([]);
+    setLatestScreenshot(null);
+    setPendingApproval(null);
+    setTask(incompleteRun.task);
+    const result = await window.electronAPI.runTask(incompleteRun.task, connectorId, incompleteRun.id);
+    setIncompleteRun(null);
+    if (result.started) setRunning(true);
   }
 
   async function handleStop() {
@@ -262,6 +282,32 @@ export default function AgentPage() {
               </span>
             )}
           </div>
+
+          {incompleteRun && !running && (
+            <div className="rounded-xl border border-amber-300 bg-amber-50 p-5">
+              <h2 className="font-semibold text-amber-900">נמצאה ריצה שלא הושלמה</h2>
+              <p className="mt-1 text-sm text-amber-900">
+                &quot;{incompleteRun.task}&quot; - {incompleteRun.steps.length} צעדים בוצעו לפני שהאפליקציה
+                נסגרה. אפשר להמשיך מאותה נקודה, בלי להתחיל מחדש ובלי לחזור על פעולות שכבר בוצעו.
+              </p>
+              <div className="mt-3 flex gap-2">
+                <button
+                  type="button"
+                  onClick={handleResume}
+                  className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+                >
+                  המשך מאותה נקודה
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIncompleteRun(null)}
+                  className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  התעלם
+                </button>
+              </div>
+            </div>
+          )}
 
           <textarea
             value={task}

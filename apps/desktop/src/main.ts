@@ -4,7 +4,7 @@ import path from "node:path";
 import fs from "node:fs";
 import { getXaiApiKey, hasXaiApiKey, setXaiApiKey, clearXaiApiKey } from "./settings";
 import { runComputerUseTask, type TaskUpdateEvent } from "./task-runner";
-import { saveRun, listRuns } from "./run-history";
+import { saveRun, listRuns, getRun, findIncompleteRun } from "./run-history";
 import { getLearnedScreens, recordScreen } from "./screen-memory";
 
 /**
@@ -99,35 +99,44 @@ app.whenReady().then(() => {
 
   ipcMain.handle("aiop:clear-xai-key", () => clearXaiApiKey());
 
-  ipcMain.handle("aiop:run-task", async (event, task: string, connectorId: string) => {
-    if (taskRunning) return { started: false, error: "task-already-running" as const };
+  ipcMain.handle(
+    "aiop:run-task",
+    async (event, task: string, connectorId: string, resumeRunId?: string) => {
+      if (taskRunning) return { started: false, error: "task-already-running" as const };
 
-    const apiKey = getXaiApiKey();
-    if (!apiKey) return { started: false, error: "no-api-key" as const };
+      const apiKey = getXaiApiKey();
+      if (!apiKey) return { started: false, error: "no-api-key" as const };
 
-    const sender = event.sender;
-    taskRunning = true;
-    stopRequested = false;
+      const resumeRun = resumeRunId ? getRun(resumeRunId) : null;
 
-    void runComputerUseTask({
-      apiKey,
-      task,
-      knownScreens: getLearnedScreens(connectorId).map((s) => s.label),
-      shouldStop: () => stopRequested,
-      onUpdate: (update: TaskUpdateEvent) => {
-        if (update.type === "action") recordScreen(connectorId, update.screenLabel, update.reasoning);
-        if (update.type === "run-summary") saveRun(update.run);
-        if (!sender.isDestroyed()) sender.send("aiop:task-update", update);
-      },
-      waitForApproval: () => new Promise<boolean>((resolve) => (pendingApproval = { resolve })),
-    }).finally(() => {
-      taskRunning = false;
-    });
+      const sender = event.sender;
+      taskRunning = true;
+      stopRequested = false;
 
-    return { started: true };
-  });
+      void runComputerUseTask({
+        apiKey,
+        task,
+        connectorId,
+        knownScreens: getLearnedScreens(connectorId).map((s) => s.label),
+        resumeFrom: resumeRun ? { startedAt: resumeRun.startedAt, steps: resumeRun.steps } : undefined,
+        shouldStop: () => stopRequested,
+        onUpdate: (update: TaskUpdateEvent) => {
+          if (update.type === "action") recordScreen(connectorId, update.screenLabel, update.reasoning);
+          if (update.type === "run-summary") saveRun(update.run);
+          if (!sender.isDestroyed()) sender.send("aiop:task-update", update);
+        },
+        waitForApproval: () => new Promise<boolean>((resolve) => (pendingApproval = { resolve })),
+      }).finally(() => {
+        taskRunning = false;
+      });
+
+      return { started: true };
+    },
+  );
 
   ipcMain.handle("aiop:get-learned-screens", (_event, connectorId: string) => getLearnedScreens(connectorId));
+
+  ipcMain.handle("aiop:get-incomplete-run", (_event, connectorId: string) => findIncompleteRun(connectorId));
 
   ipcMain.handle("aiop:approve-action", () => {
     if (!pendingApproval) return false;

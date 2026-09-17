@@ -39,3 +39,16 @@ export function listRuns(): StoredRunRecord[] {
     .filter((r): r is StoredRunRecord => r !== null)
     .sort((a, b) => b.startedAt.localeCompare(a.startedAt));
 }
+
+export function getRun(id: string): StoredRunRecord | null {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(runsDir(), `${id}.json`), "utf-8")) as StoredRunRecord;
+  } catch {
+    return null;
+  }
+}
+
+/** ריצה שנשארה "in-progress" בדיסק פירושה שהאפליקציה נסגרה/קרסה באמצע - לא הסתיימה כרגיל. */
+export function findIncompleteRun(connectorId: string): StoredRunRecord | null {
+  return listRuns().find((r) => r.status === "in-progress" && r.connectorId === connectorId) ?? null;
+}
