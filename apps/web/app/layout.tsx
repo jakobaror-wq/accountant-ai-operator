@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Heebo } from "next/font/google";
+import Link from "next/link";
 import "./globals.css";
 
 const heebo = Heebo({
@@ -20,8 +21,16 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="he" dir="rtl" className={`${heebo.variable} h-full antialiased`}>
       <body className="min-h-full flex flex-col bg-slate-50 text-slate-900 font-sans">
-        <header className="border-b border-slate-200 bg-white px-6 py-3">
+        <header className="flex items-center justify-between border-b border-slate-200 bg-white px-6 py-3">
           <span className="text-sm font-semibold text-slate-900">Accountant AI Operator</span>
+          <nav className="flex gap-4 text-sm text-slate-600">
+            <Link href="/integrations" className="hover:text-indigo-600">
+              אינטגרציות
+            </Link>
+            <Link href="/agent" className="hover:text-indigo-600">
+              AI Agent
+            </Link>
+          </nav>
         </header>
         {children}
       </body>

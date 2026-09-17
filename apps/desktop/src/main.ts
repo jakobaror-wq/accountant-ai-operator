@@ -1,6 +1,8 @@
 import { app, BrowserWindow, ipcMain, dialog, shell } from "electron";
 import path from "node:path";
 import fs from "node:fs";
+import { getXaiApiKey, hasXaiApiKey, setXaiApiKey, clearXaiApiKey } from "./settings";
+import { runComputerUseTask, type TaskUpdateEvent } from "./task-runner";
 
 /**
  * ברירת המחדל היא האתר החי ב-Vercel. אפשר לדרוס בזמן פיתוח מקומי:
@@ -60,8 +62,46 @@ function createWindow(): BrowserWindow {
   return win;
 }
 
+let taskRunning = false;
+let stopRequested = false;
+
 app.whenReady().then(() => {
   ipcMain.handle("aiop:get-connector-paths", () => readConnectorPaths());
+
+  ipcMain.handle("aiop:get-xai-key-status", () => hasXaiApiKey());
+
+  ipcMain.handle("aiop:save-xai-key", (_event, key: string) => setXaiApiKey(key));
+
+  ipcMain.handle("aiop:clear-xai-key", () => clearXaiApiKey());
+
+  ipcMain.handle("aiop:run-task", async (event, task: string) => {
+    if (taskRunning) return { started: false, error: "task-already-running" as const };
+
+    const apiKey = getXaiApiKey();
+    if (!apiKey) return { started: false, error: "no-api-key" as const };
+
+    const sender = event.sender;
+    taskRunning = true;
+    stopRequested = false;
+
+    void runComputerUseTask({
+      apiKey,
+      task,
+      shouldStop: () => stopRequested,
+      onUpdate: (update: TaskUpdateEvent) => {
+        if (!sender.isDestroyed()) sender.send("aiop:task-update", update);
+      },
+    }).finally(() => {
+      taskRunning = false;
+    });
+
+    return { started: true };
+  });
+
+  ipcMain.handle("aiop:stop-task", () => {
+    stopRequested = true;
+    return true;
+  });
 
   ipcMain.handle("aiop:pick-executable", async (event, connectorId: string) => {
     const win = BrowserWindow.fromWebContents(event.sender) ?? undefined;
