@@ -5,6 +5,7 @@ import fs from "node:fs";
 import { getXaiApiKey, hasXaiApiKey, setXaiApiKey, clearXaiApiKey } from "./settings";
 import { runComputerUseTask, type TaskUpdateEvent } from "./task-runner";
 import { saveRun, listRuns } from "./run-history";
+import { getLearnedScreens, recordScreen } from "./screen-memory";
 
 /**
  * ברירת המחדל היא האתר החי ב-Vercel. אפשר לדרוס בזמן פיתוח מקומי:
@@ -98,7 +99,7 @@ app.whenReady().then(() => {
 
   ipcMain.handle("aiop:clear-xai-key", () => clearXaiApiKey());
 
-  ipcMain.handle("aiop:run-task", async (event, task: string) => {
+  ipcMain.handle("aiop:run-task", async (event, task: string, connectorId: string) => {
     if (taskRunning) return { started: false, error: "task-already-running" as const };
 
     const apiKey = getXaiApiKey();
@@ -111,8 +112,10 @@ app.whenReady().then(() => {
     void runComputerUseTask({
       apiKey,
       task,
+      knownScreens: getLearnedScreens(connectorId).map((s) => s.label),
       shouldStop: () => stopRequested,
       onUpdate: (update: TaskUpdateEvent) => {
+        if (update.type === "action") recordScreen(connectorId, update.screenLabel, update.reasoning);
         if (update.type === "run-summary") saveRun(update.run);
         if (!sender.isDestroyed()) sender.send("aiop:task-update", update);
       },
@@ -123,6 +126,8 @@ app.whenReady().then(() => {
 
     return { started: true };
   });
+
+  ipcMain.handle("aiop:get-learned-screens", (_event, connectorId: string) => getLearnedScreens(connectorId));
 
   ipcMain.handle("aiop:approve-action", () => {
     if (!pendingApproval) return false;

@@ -18,11 +18,20 @@ export interface RunStepRecord {
   step: number;
   timestamp: string;
   reasoning?: string;
+  screenLabel?: string;
   action?: ComputerActionRequest;
   requiresApproval?: boolean;
   decision?: "approved" | "rejected";
   outcome: "executed" | "rejected" | "stopped" | "failed" | "done";
   error?: string;
+}
+
+export interface LearnedScreen {
+  label: string;
+  timesSeen: number;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  exampleReasoning: string;
 }
 
 export interface RunRecord {
@@ -41,7 +50,7 @@ export interface StoredRunRecord extends RunRecord {
 export type TaskUpdateEvent =
   | { type: "step-start"; step: number }
   | { type: "screenshot"; step: number; base64Png: string }
-  | { type: "action"; step: number; reasoning: string; action: ComputerActionRequest }
+  | { type: "action"; step: number; reasoning: string; screenLabel: string; action: ComputerActionRequest }
   | { type: "awaiting-approval"; step: number; reasoning: string; action: ComputerActionRequest }
   | { type: "rejected"; step: number }
   | { type: "error"; step: number; message: string }
@@ -69,11 +78,14 @@ const electronAPI = {
   saveXaiKey: (key: string): Promise<boolean> => ipcRenderer.invoke("aiop:save-xai-key", key),
   clearXaiKey: (): Promise<boolean> => ipcRenderer.invoke("aiop:clear-xai-key"),
 
-  runTask: (task: string): Promise<RunTaskResult> => ipcRenderer.invoke("aiop:run-task", task),
+  runTask: (task: string, connectorId: string): Promise<RunTaskResult> =>
+    ipcRenderer.invoke("aiop:run-task", task, connectorId),
   stopTask: (): Promise<boolean> => ipcRenderer.invoke("aiop:stop-task"),
   approveAction: (): Promise<boolean> => ipcRenderer.invoke("aiop:approve-action"),
   rejectAction: (): Promise<boolean> => ipcRenderer.invoke("aiop:reject-action"),
   listRuns: (): Promise<StoredRunRecord[]> => ipcRenderer.invoke("aiop:list-runs"),
+  getLearnedScreens: (connectorId: string): Promise<LearnedScreen[]> =>
+    ipcRenderer.invoke("aiop:get-learned-screens", connectorId),
   onTaskUpdate: (callback: (event: TaskUpdateEvent) => void): (() => void) => {
     const handler = (_event: unknown, data: TaskUpdateEvent) => callback(data);
     ipcRenderer.on("aiop:task-update", handler);

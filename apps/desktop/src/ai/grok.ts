@@ -17,6 +17,7 @@ export type ComputerActionRequest =
 
 export interface GrokStepResult {
   reasoning: string;
+  screenLabel: string;
   requiresApproval: boolean;
   action: ComputerActionRequest;
 }
@@ -27,9 +28,11 @@ export interface HistoryEntry {
 }
 
 const SYSTEM_PROMPT = `אתה סוכן שמפעיל תוכנת מחשב עבור משתמש, בהתבסס על צילומי מסך.
-בכל שלב תקבל: תיאור משימה, גודל המסך בפיקסלים (0,0 בפינה השמאלית-עליונה), היסטוריית פעולות קודמות, וצילום מסך נוכחי.
+בכל שלב תקבל: תיאור משימה, גודל המסך בפיקסלים (0,0 בפינה השמאלית-עליונה), היסטוריית פעולות קודמות, רשימת מסכים מוכרים בתוכנה הזו (אם יש, מריצות קודמות), וצילום מסך נוכחי.
 עליך להחזיר תמיד JSON יחיד בפורמט הבא, ללא טקסט נוסף:
-{"reasoning": "הסבר קצר של מה שאתה רואה ולמה בחרת בפעולה", "requiresApproval": true|false, "action": {...}}
+{"reasoning": "הסבר קצר של מה שאתה רואה ולמה בחרת בפעולה", "screenLabel": "שם קצר וקבוע למסך הנוכחי (2-4 מילים)", "requiresApproval": true|false, "action": {...}}
+
+**screenLabel:** תן שם עקבי וקצר לסוג המסך שאתה רואה עכשיו (למשל "מסך פתיחה", "טופס לקוח", "מאזן בוחן") - לא תיאור חופשי, אלא שם קבוע שיחזור על עצמו בכל פעם שתראה מסך מאותו הסוג, גם בהרצות עתידיות. אם המסך תואם אחד ה"מסכים המוכרים" שקיבלת - השתמש באותו שם בדיוק, אל תמציא שם חדש.
 
 ה-action חייב להיות אחד מהבאים בדיוק:
 {"type":"click","x":<number>,"y":<number>,"button":"left"|"right"}
@@ -53,6 +56,7 @@ function buildUserPrompt(params: {
   screenWidth: number;
   screenHeight: number;
   history: HistoryEntry[];
+  knownScreens: string[];
 }): string {
   const historyText =
     params.history.length === 0
@@ -61,7 +65,10 @@ function buildUserPrompt(params: {
           .map((h, i) => `${i + 1}. ${h.reasoning} -> ${JSON.stringify(h.action)}`)
           .join("\n");
 
-  return `משימה: ${params.task}\nגודל מסך: ${params.screenWidth}x${params.screenHeight}\n\nהיסטוריית פעולות:\n${historyText}\n\nמה הפעולה הבאה?`;
+  const knownScreensText =
+    params.knownScreens.length === 0 ? "(אין עדיין מסכים מוכרים בתוכנה הזו)" : params.knownScreens.join(", ");
+
+  return `משימה: ${params.task}\nגודל מסך: ${params.screenWidth}x${params.screenHeight}\n\nמסכים מוכרים בתוכנה הזו: ${knownScreensText}\n\nהיסטוריית פעולות:\n${historyText}\n\nמה הפעולה הבאה?`;
 }
 
 function extractJson(content: string): unknown {
@@ -81,6 +88,7 @@ export async function requestNextAction(params: {
   screenWidth: number;
   screenHeight: number;
   history: HistoryEntry[];
+  knownScreens: string[];
   model?: string;
 }): Promise<GrokStepResult> {
   const response = await fetch(`${XAI_BASE_URL}/chat/completions`, {
@@ -125,6 +133,7 @@ export async function requestNextAction(params: {
   // מניחים שכן נדרש אישור - למעט "done" שהוא דיווח בלבד, לא פעולה על המסך.
   const requiresApproval =
     parsed.action.type === "done" ? false : typeof parsed.requiresApproval === "boolean" ? parsed.requiresApproval : true;
+  const screenLabel = typeof parsed.screenLabel === "string" && parsed.screenLabel.trim() ? parsed.screenLabel.trim() : "לא מזוהה";
 
-  return { ...parsed, requiresApproval };
+  return { ...parsed, requiresApproval, screenLabel };
 }

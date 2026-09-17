@@ -18,11 +18,20 @@ interface RunStepRecord {
   step: number;
   timestamp: string;
   reasoning?: string;
+  screenLabel?: string;
   action?: ComputerActionRequest;
   requiresApproval?: boolean;
   decision?: "approved" | "rejected";
   outcome: "executed" | "rejected" | "stopped" | "failed" | "done";
   error?: string;
+}
+
+interface LearnedScreen {
+  label: string;
+  timesSeen: number;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  exampleReasoning: string;
 }
 
 interface RunRecord {
@@ -41,7 +50,7 @@ interface StoredRunRecord extends RunRecord {
 type TaskUpdateEvent =
   | { type: "step-start"; step: number }
   | { type: "screenshot"; step: number; base64Png: string }
-  | { type: "action"; step: number; reasoning: string; action: ComputerActionRequest }
+  | { type: "action"; step: number; reasoning: string; screenLabel: string; action: ComputerActionRequest }
   | { type: "awaiting-approval"; step: number; reasoning: string; action: ComputerActionRequest }
   | { type: "rejected"; step: number }
   | { type: "error"; step: number; message: string }
@@ -65,11 +74,12 @@ interface ElectronAPI {
   saveXaiKey(key: string): Promise<boolean>;
   clearXaiKey(): Promise<boolean>;
 
-  runTask(task: string): Promise<RunTaskResult>;
+  runTask(task: string, connectorId: string): Promise<RunTaskResult>;
   stopTask(): Promise<boolean>;
   approveAction(): Promise<boolean>;
   rejectAction(): Promise<boolean>;
   listRuns(): Promise<StoredRunRecord[]>;
+  getLearnedScreens(connectorId: string): Promise<LearnedScreen[]>;
   onTaskUpdate(callback: (event: TaskUpdateEvent) => void): () => void;
 }
 

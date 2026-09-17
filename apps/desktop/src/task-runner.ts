@@ -5,6 +5,7 @@ export interface RunStepRecord {
   step: number;
   timestamp: string;
   reasoning?: string;
+  screenLabel?: string;
   action?: HistoryEntry["action"];
   requiresApproval?: boolean;
   decision?: "approved" | "rejected";
@@ -24,7 +25,7 @@ export interface RunRecord {
 export type TaskUpdateEvent =
   | { type: "step-start"; step: number }
   | { type: "screenshot"; step: number; base64Png: string }
-  | { type: "action"; step: number; reasoning: string; action: HistoryEntry["action"] }
+  | { type: "action"; step: number; reasoning: string; screenLabel: string; action: HistoryEntry["action"] }
   | { type: "awaiting-approval"; step: number; reasoning: string; action: HistoryEntry["action"] }
   | { type: "rejected"; step: number }
   | { type: "error"; step: number; message: string }
@@ -39,6 +40,7 @@ const STEP_PAUSE_MS = 500;
 export async function runComputerUseTask(params: {
   apiKey: string;
   task: string;
+  knownScreens: string[];
   onUpdate: (event: TaskUpdateEvent) => void;
   shouldStop: () => boolean;
   waitForApproval: (step: number, reasoning: string, action: HistoryEntry["action"]) => Promise<boolean>;
@@ -84,6 +86,7 @@ export async function runComputerUseTask(params: {
         screenWidth: screenshot.width,
         screenHeight: screenshot.height,
         history,
+        knownScreens: params.knownScreens,
       });
     } catch (err) {
       const message = `ai-request-failed: ${String(err)}`;
@@ -93,13 +96,14 @@ export async function runComputerUseTask(params: {
       return;
     }
 
-    params.onUpdate({ type: "action", step, reasoning: next.reasoning, action: next.action });
+    params.onUpdate({ type: "action", step, reasoning: next.reasoning, screenLabel: next.screenLabel, action: next.action });
 
     if (next.action.type === "done") {
       steps.push({
         step,
         timestamp: new Date().toISOString(),
         reasoning: next.reasoning,
+        screenLabel: next.screenLabel,
         action: next.action,
         requiresApproval: false,
         outcome: "done",
@@ -118,6 +122,7 @@ export async function runComputerUseTask(params: {
           step,
           timestamp: new Date().toISOString(),
           reasoning: next.reasoning,
+          screenLabel: next.screenLabel,
           action: next.action,
           requiresApproval: true,
           decision: approved ? "approved" : "rejected",
@@ -132,6 +137,7 @@ export async function runComputerUseTask(params: {
           step,
           timestamp: new Date().toISOString(),
           reasoning: next.reasoning,
+          screenLabel: next.screenLabel,
           action: next.action,
           requiresApproval: true,
           decision: "rejected",
@@ -151,6 +157,7 @@ export async function runComputerUseTask(params: {
         step,
         timestamp: new Date().toISOString(),
         reasoning: next.reasoning,
+        screenLabel: next.screenLabel,
         action: next.action,
         requiresApproval: next.requiresApproval,
         decision: next.requiresApproval ? "approved" : undefined,
@@ -166,6 +173,7 @@ export async function runComputerUseTask(params: {
       step,
       timestamp: new Date().toISOString(),
       reasoning: next.reasoning,
+      screenLabel: next.screenLabel,
       action: next.action,
       requiresApproval: next.requiresApproval,
       decision: next.requiresApproval ? "approved" : undefined,

@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { RunHistory } from "@/components/RunHistory";
+import { CONNECTORS } from "@/lib/connectors";
 
 interface LogLine {
   step: number;
@@ -41,6 +42,8 @@ export default function AgentPage() {
 
   const [keySaveError, setKeySaveError] = useState<string | null>(null);
   const [task, setTask] = useState("");
+  const [connectorId, setConnectorId] = useState(CONNECTORS[0]?.id ?? "");
+  const [learnedScreenCount, setLearnedScreenCount] = useState(0);
   const [running, setRunning] = useState(false);
   const [log, setLog] = useState<LogLine[]>([]);
   const [latestScreenshot, setLatestScreenshot] = useState<string | null>(null);
@@ -65,7 +68,11 @@ export default function AgentPage() {
         case "action":
           setLog((prev) => [
             ...prev,
-            { step: event.step, kind: "reasoning", text: `${event.reasoning} → ${event.action.type}` },
+            {
+              step: event.step,
+              kind: "reasoning",
+              text: `[${event.screenLabel}] ${event.reasoning} → ${event.action.type}`,
+            },
           ]);
           break;
         case "awaiting-approval":
@@ -113,6 +120,11 @@ export default function AgentPage() {
     logEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [log]);
 
+  useEffect(() => {
+    if (!window.electronAPI || !connectorId) return;
+    window.electronAPI.getLearnedScreens(connectorId).then((screens) => setLearnedScreenCount(screens.length));
+  }, [connectorId, historyRefresh]);
+
   async function handleSaveKey() {
     if (!window.electronAPI || !keyInput.trim()) return;
     setSavingKey(true);
@@ -136,11 +148,11 @@ export default function AgentPage() {
   }
 
   async function handleStart() {
-    if (!window.electronAPI || !task.trim()) return;
+    if (!window.electronAPI || !task.trim() || !connectorId) return;
     setLog([]);
     setLatestScreenshot(null);
     setPendingApproval(null);
-    const result = await window.electronAPI.runTask(task.trim());
+    const result = await window.electronAPI.runTask(task.trim(), connectorId);
     if (result.started) {
       setRunning(true);
     } else {
@@ -227,6 +239,30 @@ export default function AgentPage() {
             </button>
           </div>
 
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-medium text-slate-500" htmlFor="connector-select">
+              עבור איזו תוכנה המשימה?
+            </label>
+            <select
+              id="connector-select"
+              value={connectorId}
+              onChange={(e) => setConnectorId(e.target.value)}
+              disabled={running}
+              className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
+            >
+              {CONNECTORS.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+            {learnedScreenCount > 0 && (
+              <span className="text-xs text-slate-400">
+                {learnedScreenCount} מסכים מוכרים בתוכנה הזו מריצות קודמות
+              </span>
+            )}
+          </div>
+
           <textarea
             value={task}
             onChange={(e) => setTask(e.target.value)}
@@ -240,7 +276,7 @@ export default function AgentPage() {
             <button
               type="button"
               onClick={handleStart}
-              disabled={running || !task.trim()}
+              disabled={running || !task.trim() || !connectorId}
               className="rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
             >
               {running ? "רץ..." : "התחל"}
