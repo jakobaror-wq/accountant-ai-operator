@@ -1,5 +1,6 @@
 import { CONNECTORS } from "@/lib/connectors";
 import { ConnectorCard } from "@/components/ConnectorCard";
+import { InstallAppBanner } from "@/components/InstallAppBanner";
 import { getSupabase } from "@/lib/supabase";
 import { DEFAULT_OFFICE_ID } from "@/lib/default-office";
 import type { ConnectorConfig } from "@/lib/connector-configs-client";
@@ -28,6 +29,7 @@ export default async function IntegrationsPage() {
 
   return (
     <main className="mx-auto w-full max-w-5xl flex-1 px-6 py-10">
+      <InstallAppBanner />
       <header className="mb-8">
         <h1 className="text-2xl font-bold text-slate-900">מרכז אינטגרציות</h1>
         <p className="mt-2 max-w-2xl text-sm text-slate-600">
