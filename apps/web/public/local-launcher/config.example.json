@@ -1,0 +1,8 @@
+{
+  "connectors": [
+    { "id": "hashavshevet", "executablePath": "C:\\Path\\To\\Hashavshevet.exe" },
+    { "id": "hisulit", "executablePath": "C:\\Path\\To\\Hisulit.exe" },
+    { "id": "shikulit", "executablePath": "C:\\Path\\To\\Shikulit.exe" },
+    { "id": "konto", "executablePath": "C:\\Path\\To\\Konto.exe" }
+  ]
+}

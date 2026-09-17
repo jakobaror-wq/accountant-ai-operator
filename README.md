@@ -2,7 +2,15 @@
 
 > סוכן AI אוטונומי המפעיל בפועל תוכנות חשבונאות ישראליות קיימות (חשבשבת, חיסולית, שיקלולית, קונטו), מבצע תהליך עבודה מלא ומגיש חבילת אישור לרו"ח - לא Dashboard, לא אינטגרציית API בלבד.
 
-**סטטוס נוכחי: שלב 0 - תכנון בלבד. אין עדיין קוד, אין חיבור אמיתי לאף תוכנת חשבונאות.**
+**סטטוס נוכחי: v1 - מסך חיבורים (`apps/web`). עדיין אין קריאת נתונים אוטומטית מאף תוכנה, ואין שום Connector אמיתי - ר' [docs/08-V1-CONNECTION-MODEL.md](docs/08-V1-CONNECTION-MODEL.md).**
+
+## הרצה מקומית
+
+```bash
+cd apps/web
+npm install
+npm run dev
+```
 
 ## מסמכי שלב 0
 
@@ -16,6 +24,7 @@
 | [docs/05-DATA-MODEL.md](docs/05-DATA-MODEL.md) | סכימת Supabase, ישויות, RLS, שכבות זיכרון |
 | [docs/06-MVP-PLAN.md](docs/06-MVP-PLAN.md) | מה בדיוק ב-MVP, תוכנת Demo, קריטריוני קבלה |
 | [docs/07-ASSUMPTIONS-OPEN-QUESTIONS.md](docs/07-ASSUMPTIONS-OPEN-QUESTIONS.md) | הנחות, חסמים ושאלות פתוחות לפני כל קוד משמעותי |
+| [docs/08-V1-CONNECTION-MODEL.md](docs/08-V1-CONNECTION-MODEL.md) | מודל החיבור ב-v1: כפתורי דפדפן מול Local Launcher לתוכנות מותקנות |
 
 ## עקרון על
 
