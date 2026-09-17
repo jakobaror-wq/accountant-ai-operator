@@ -39,7 +39,7 @@ jobs:
           name: "Accountant AI Operator - Desktop ${{ github.run_number }}"
           files: |
             apps/desktop/release/*.exe
-            apps/desktop/release/*.yml
+            apps/desktop/release/latest.yml
             apps/desktop/release/*.blockmap
           generate_release_notes: false
           body: |
