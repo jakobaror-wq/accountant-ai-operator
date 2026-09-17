@@ -17,6 +17,7 @@ export type ComputerActionRequest =
 
 export interface GrokStepResult {
   reasoning: string;
+  requiresApproval: boolean;
   action: ComputerActionRequest;
 }
 
@@ -28,7 +29,7 @@ export interface HistoryEntry {
 const SYSTEM_PROMPT = `אתה סוכן שמפעיל תוכנת מחשב עבור משתמש, בהתבסס על צילומי מסך.
 בכל שלב תקבל: תיאור משימה, גודל המסך בפיקסלים (0,0 בפינה השמאלית-עליונה), היסטוריית פעולות קודמות, וצילום מסך נוכחי.
 עליך להחזיר תמיד JSON יחיד בפורמט הבא, ללא טקסט נוסף:
-{"reasoning": "הסבר קצר של מה שאתה רואה ולמה בחרת בפעולה", "action": {...}}
+{"reasoning": "הסבר קצר של מה שאתה רואה ולמה בחרת בפעולה", "requiresApproval": true|false, "action": {...}}
 
 ה-action חייב להיות אחד מהבאים בדיוק:
 {"type":"click","x":<number>,"y":<number>,"button":"left"|"right"}
@@ -38,6 +39,12 @@ const SYSTEM_PROMPT = `אתה סוכן שמפעיל תוכנת מחשב עבור
 {"type":"scroll","amount":<number>}  // חיובי = למטה, שלילי = למעלה
 {"type":"wait","ms":<number>}
 {"type":"done","summary":"<string>"}  // רק כשהמשימה הושלמה במלואה
+
+**requiresApproval - קריטי, אסור לטעות בו:**
+שים true אם הפעולה עלולה לשנות נתונים בצורה בלתי הפיכה או משמעותית - לדוגמה: שמירה, שליחה, מחיקה, אישור/פרסום/רישום סופי של פקודת יומן או מסמך, אישור תשלום, לחיצה על "כן"/"אישור"/"מחק" בדיאלוג אזהרה, סגירת שנת מס, או כל פעולה שקשה/אי אפשר לבטל אחריה.
+שים false לפעולות בטוחות: ניווט בין מסכים, פתיחת תפריט, הקלדת נתונים לשדה (עוד לפני שמירה), גלילה, סימון/בחירת שורה לצפייה, לחיצה על "ביטול"/"סגור" ללא שמירה.
+אם אתה לא בטוח - שים true (ברירת המחדל הבטוחה היא לעצור ולשאול, לא לנחש). "done" תמיד עם false - הוא רק דיווח, לא פעולה על המסך.
+כשה-requiresApproval הוא true, הפעולה **לא תבוצע אוטומטית** - משתמש אנושי יצטרך לאשר אותה קודם. קח את זה בחשבון: אל תסמן true על כל דבר בלי הבחנה, זה יעצור את התהליך שוב ושוב לחינם.
 
 תמיד תעדיף לבדוק את התוצאה של הפעולה הקודמת לפני שתמשיך - אם משהו לא כמצופה, אל תמשיך "עיוור", תסביר את זה ב-reasoning ותנסה גישה אחרת. אם המשימה לא ברורה או תקועה אחרי כמה ניסיונות, עדיין תחזיר "done" עם summary שמסביר מה קרה ולמה לא הושלם - אל תמציא הצלחה.`;
 
@@ -113,5 +120,11 @@ export async function requestNextAction(params: {
 
   const parsed = extractJson(content) as GrokStepResult;
   if (!parsed?.action?.type) throw new Error("xai-malformed-response");
-  return parsed;
+
+  // ברירת מחדל בטוחה: אם המודל לא ציין requiresApproval (או שלח משהו לא תקין),
+  // מניחים שכן נדרש אישור - למעט "done" שהוא דיווח בלבד, לא פעולה על המסך.
+  const requiresApproval =
+    parsed.action.type === "done" ? false : typeof parsed.requiresApproval === "boolean" ? parsed.requiresApproval : true;
+
+  return { ...parsed, requiresApproval };
 }

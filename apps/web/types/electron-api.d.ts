@@ -18,6 +18,8 @@ type TaskUpdateEvent =
   | { type: "step-start"; step: number }
   | { type: "screenshot"; step: number; base64Png: string }
   | { type: "action"; step: number; reasoning: string; action: ComputerActionRequest }
+  | { type: "awaiting-approval"; step: number; reasoning: string; action: ComputerActionRequest }
+  | { type: "rejected"; step: number }
   | { type: "error"; step: number; message: string }
   | { type: "done"; summary: string }
   | { type: "stopped" }
@@ -40,6 +42,8 @@ interface ElectronAPI {
 
   runTask(task: string): Promise<RunTaskResult>;
   stopTask(): Promise<boolean>;
+  approveAction(): Promise<boolean>;
+  rejectAction(): Promise<boolean>;
   onTaskUpdate(callback: (event: TaskUpdateEvent) => void): () => void;
 }
 

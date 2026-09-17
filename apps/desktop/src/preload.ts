@@ -18,6 +18,8 @@ export type TaskUpdateEvent =
   | { type: "step-start"; step: number }
   | { type: "screenshot"; step: number; base64Png: string }
   | { type: "action"; step: number; reasoning: string; action: ComputerActionRequest }
+  | { type: "awaiting-approval"; step: number; reasoning: string; action: ComputerActionRequest }
+  | { type: "rejected"; step: number }
   | { type: "error"; step: number; message: string }
   | { type: "done"; summary: string }
   | { type: "stopped" }
@@ -44,6 +46,8 @@ const electronAPI = {
 
   runTask: (task: string): Promise<RunTaskResult> => ipcRenderer.invoke("aiop:run-task", task),
   stopTask: (): Promise<boolean> => ipcRenderer.invoke("aiop:stop-task"),
+  approveAction: (): Promise<boolean> => ipcRenderer.invoke("aiop:approve-action"),
+  rejectAction: (): Promise<boolean> => ipcRenderer.invoke("aiop:reject-action"),
   onTaskUpdate: (callback: (event: TaskUpdateEvent) => void): (() => void) => {
     const handler = (_event: unknown, data: TaskUpdateEvent) => callback(data);
     ipcRenderer.on("aiop:task-update", handler);

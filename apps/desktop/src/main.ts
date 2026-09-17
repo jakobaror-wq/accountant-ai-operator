@@ -81,6 +81,12 @@ function createWindow(): BrowserWindow {
 
 let taskRunning = false;
 let stopRequested = false;
+let pendingApproval: { resolve: (approved: boolean) => void } | null = null;
+
+function resolvePendingApproval(approved: boolean): void {
+  pendingApproval?.resolve(approved);
+  pendingApproval = null;
+}
 
 app.whenReady().then(() => {
   ipcMain.handle("aiop:get-connector-paths", () => readConnectorPaths());
@@ -108,6 +114,7 @@ app.whenReady().then(() => {
       onUpdate: (update: TaskUpdateEvent) => {
         if (!sender.isDestroyed()) sender.send("aiop:task-update", update);
       },
+      waitForApproval: () => new Promise<boolean>((resolve) => (pendingApproval = { resolve })),
     }).finally(() => {
       taskRunning = false;
     });
@@ -115,7 +122,20 @@ app.whenReady().then(() => {
     return { started: true };
   });
 
+  ipcMain.handle("aiop:approve-action", () => {
+    if (!pendingApproval) return false;
+    resolvePendingApproval(true);
+    return true;
+  });
+
+  ipcMain.handle("aiop:reject-action", () => {
+    if (!pendingApproval) return false;
+    resolvePendingApproval(false);
+    return true;
+  });
+
   ipcMain.handle("aiop:stop-task", () => {
+    if (pendingApproval) resolvePendingApproval(false);
     stopRequested = true;
     return true;
   });

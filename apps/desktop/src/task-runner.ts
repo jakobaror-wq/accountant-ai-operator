@@ -5,6 +5,8 @@ export type TaskUpdateEvent =
   | { type: "step-start"; step: number }
   | { type: "screenshot"; step: number; base64Png: string }
   | { type: "action"; step: number; reasoning: string; action: HistoryEntry["action"] }
+  | { type: "awaiting-approval"; step: number; reasoning: string; action: HistoryEntry["action"] }
+  | { type: "rejected"; step: number }
   | { type: "error"; step: number; message: string }
   | { type: "done"; summary: string }
   | { type: "stopped" }
@@ -18,6 +20,7 @@ export async function runComputerUseTask(params: {
   task: string;
   onUpdate: (event: TaskUpdateEvent) => void;
   shouldStop: () => boolean;
+  waitForApproval: (step: number, reasoning: string, action: HistoryEntry["action"]) => Promise<boolean>;
 }): Promise<void> {
   const history: HistoryEntry[] = [];
 
@@ -58,6 +61,20 @@ export async function runComputerUseTask(params: {
     if (next.action.type === "done") {
       params.onUpdate({ type: "done", summary: next.action.summary });
       return;
+    }
+
+    if (next.requiresApproval) {
+      params.onUpdate({ type: "awaiting-approval", step, reasoning: next.reasoning, action: next.action });
+      const approved = await params.waitForApproval(step, next.reasoning, next.action);
+
+      if (params.shouldStop()) {
+        params.onUpdate({ type: "stopped" });
+        return;
+      }
+      if (!approved) {
+        params.onUpdate({ type: "rejected", step });
+        return;
+      }
     }
 
     try {

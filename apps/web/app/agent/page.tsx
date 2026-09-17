@@ -9,6 +9,29 @@ interface LogLine {
   text: string;
 }
 
+interface PendingApproval {
+  step: number;
+  reasoning: string;
+  actionLabel: string;
+}
+
+function describeAction(action: { type: string } & Record<string, unknown>): string {
+  switch (action.type) {
+    case "click":
+      return `קליק בנקודה (${action.x}, ${action.y})`;
+    case "double_click":
+      return `קליק כפול בנקודה (${action.x}, ${action.y})`;
+    case "type":
+      return `הקלדת הטקסט: "${action.text}"`;
+    case "key":
+      return `לחיצה על המקש: ${action.key}`;
+    case "scroll":
+      return "גלילה";
+    default:
+      return action.type as string;
+  }
+}
+
 export default function AgentPage() {
   const [isElectron, setIsElectron] = useState(false);
   const [hasKey, setHasKey] = useState(false);
@@ -20,6 +43,7 @@ export default function AgentPage() {
   const [running, setRunning] = useState(false);
   const [log, setLog] = useState<LogLine[]>([]);
   const [latestScreenshot, setLatestScreenshot] = useState<string | null>(null);
+  const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null);
   const logEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -42,19 +66,35 @@ export default function AgentPage() {
             { step: event.step, kind: "reasoning", text: `${event.reasoning} → ${event.action.type}` },
           ]);
           break;
+        case "awaiting-approval":
+          setPendingApproval({
+            step: event.step,
+            reasoning: event.reasoning,
+            actionLabel: describeAction(event.action),
+          });
+          break;
+        case "rejected":
+          setPendingApproval(null);
+          setLog((prev) => [...prev, { step: event.step, kind: "status", text: "הפעולה נדחתה - המשימה נעצרה" }]);
+          setRunning(false);
+          break;
         case "error":
+          setPendingApproval(null);
           setLog((prev) => [...prev, { step: event.step, kind: "error", text: event.message }]);
           setRunning(false);
           break;
         case "done":
+          setPendingApproval(null);
           setLog((prev) => [...prev, { step: 0, kind: "status", text: `הושלם: ${event.summary}` }]);
           setRunning(false);
           break;
         case "stopped":
+          setPendingApproval(null);
           setLog((prev) => [...prev, { step: 0, kind: "status", text: "נעצר על ידי המשתמש" }]);
           setRunning(false);
           break;
         case "max-steps-reached":
+          setPendingApproval(null);
           setLog((prev) => [...prev, { step: 0, kind: "error", text: "הגיע למספר הצעדים המרבי בלי לסיים" }]);
           setRunning(false);
           break;
@@ -94,6 +134,7 @@ export default function AgentPage() {
     if (!window.electronAPI || !task.trim()) return;
     setLog([]);
     setLatestScreenshot(null);
+    setPendingApproval(null);
     const result = await window.electronAPI.runTask(task.trim());
     if (result.started) {
       setRunning(true);
@@ -111,6 +152,18 @@ export default function AgentPage() {
   async function handleStop() {
     if (!window.electronAPI) return;
     await window.electronAPI.stopTask();
+  }
+
+  async function handleApprove() {
+    if (!window.electronAPI) return;
+    setPendingApproval(null);
+    await window.electronAPI.approveAction();
+  }
+
+  async function handleReject() {
+    if (!window.electronAPI) return;
+    setPendingApproval(null);
+    await window.electronAPI.rejectAction();
   }
 
   if (!isElectron) {
@@ -197,6 +250,32 @@ export default function AgentPage() {
               </button>
             )}
           </div>
+
+          {pendingApproval && (
+            <div className="rounded-xl border border-amber-300 bg-amber-50 p-5">
+              <h2 className="font-semibold text-amber-900">נדרש אישור לפני ביצוע</h2>
+              <p className="mt-1 text-sm text-amber-900">{pendingApproval.reasoning}</p>
+              <p className="mt-2 text-sm font-medium text-amber-900">
+                הפעולה המוצעת: {pendingApproval.actionLabel}
+              </p>
+              <div className="mt-3 flex gap-2">
+                <button
+                  type="button"
+                  onClick={handleApprove}
+                  className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+                >
+                  אשר
+                </button>
+                <button
+                  type="button"
+                  onClick={handleReject}
+                  className="rounded-lg border border-red-300 px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-50"
+                >
+                  דחה ועצור
+                </button>
+              </div>
+            </div>
+          )}
 
           {(log.length > 0 || latestScreenshot) && (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
