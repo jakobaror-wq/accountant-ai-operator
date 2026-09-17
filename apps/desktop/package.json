@@ -7,8 +7,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "start": "npm run build && electron .",
-    "dist:linux": "npm run build && electron-builder --linux",
-    "dist:win": "npm run build && electron-builder --win"
+    "dist:linux": "npm run build && electron-builder --linux --publish never",
+    "dist:win": "npm run build && electron-builder --win --publish never"
   },
   "devDependencies": {
     "@types/node": "^20.19.23",
@@ -25,6 +25,11 @@
     "directories": {
       "buildResources": "build",
       "output": "release"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "jakobaror-wq",
+      "repo": "accountant-ai-operator"
     },
     "win": {
       "target": "nsis",
@@ -43,6 +48,7 @@
     }
   },
   "dependencies": {
-    "@nut-tree-fork/nut-js": "^4.2.6"
+    "@nut-tree-fork/nut-js": "^4.2.6",
+    "electron-updater": "^6.3.9"
   }
 }

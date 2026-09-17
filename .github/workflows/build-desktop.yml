@@ -26,13 +26,21 @@ jobs:
 
       - run: npm ci
 
+      # מספר גרסה עולה בכל build - electron-updater (ר' src/main.ts) משווה
+      # מול המספר הזה כדי לדעת אם יש גרסה חדשה; בלי זה כל build היה יוצא
+      # "0.1.0" לעד והעדכון האוטומטי לא היה מזהה שיש חדש יותר.
+      - run: npm version 0.1.${{ github.run_number }} --no-git-tag-version --allow-same-version
+
       - run: npm run dist:win
 
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: desktop-${{ github.run_number }}
           name: "Accountant AI Operator - Desktop ${{ github.run_number }}"
-          files: apps/desktop/release/*.exe
+          files: |
+            apps/desktop/release/*.exe
+            apps/desktop/release/*.yml
+            apps/desktop/release/*.blockmap
           generate_release_notes: false
           body: |
             בנייה אוטומטית של אפליקציית שולחן העבודה, מ-commit ${{ github.sha }}.

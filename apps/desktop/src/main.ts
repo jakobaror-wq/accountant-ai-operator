@@ -1,4 +1,5 @@
 import { app, BrowserWindow, ipcMain, dialog, shell } from "electron";
+import { autoUpdater } from "electron-updater";
 import path from "node:path";
 import fs from "node:fs";
 import { getXaiApiKey, hasXaiApiKey, setXaiApiKey, clearXaiApiKey } from "./settings";
@@ -9,6 +10,22 @@ import { runComputerUseTask, type TaskUpdateEvent } from "./task-runner";
  *   AIOP_WEB_URL=http://localhost:3100 npm start
  */
 const WEB_URL = process.env.AIOP_WEB_URL ?? "https://accountant-ai-operator.vercel.app";
+
+const UPDATE_CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000;
+
+/**
+ * עדכון שקט לגמרי: בודק ומוריד ברקע מ-GitHub Releases (ה-repo ציבורי, אין
+ * צורך בטוקן) בלי שום הודעה למשתמש, ומתקין אוטומטית רק כשהאפליקציה נסגרת
+ * בפעם הבאה (autoInstallOnAppQuit) - לא quitAndInstall מיידי, כדי לא לקטוע
+ * משימה שרצה כרגע.
+ */
+function startAutoUpdater(): void {
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+  const check = () => void autoUpdater.checkForUpdates().catch(() => {});
+  check();
+  setInterval(check, UPDATE_CHECK_INTERVAL_MS);
+}
 
 function connectorPathsFile(): string {
   return path.join(app.getPath("userData"), "connector-paths.json");
@@ -132,6 +149,7 @@ app.whenReady().then(() => {
   });
 
   createWindow();
+  startAutoUpdater();
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
