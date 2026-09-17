@@ -1,0 +1,38 @@
+name: Build Desktop App
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/desktop/**"
+      - ".github/workflows/build-desktop.yml"
+  workflow_dispatch: {}
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: apps/desktop
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - run: npm ci
+
+      - run: npm run dist:win
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: desktop-${{ github.run_number }}
+          name: "Accountant AI Operator - Desktop ${{ github.run_number }}"
+          files: apps/desktop/release/*.exe
+          generate_release_notes: false
+          body: |
+            בנייה אוטומטית של אפליקציית שולחן העבודה, מ-commit ${{ github.sha }}.
+            להתקנה: מורידים את קובץ ה-.exe, מריצים, ונוצר קיצור דרך על שולחן העבודה.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
