@@ -11,6 +11,10 @@ const heebo = Heebo({
 export const metadata: Metadata = {
   title: "Accountant AI Operator",
   description: "סוכן AI שמפעיל תוכנות חשבונאות קיימות ומגיש חבילת אישור לרו\"ח",
+  icons: {
+    icon: "/icon-512.png",
+    apple: "/apple-touch-icon.png",
+  },
 };
 
 export default async function RootLayout({ children }: LayoutProps<"/">) {
