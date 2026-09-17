@@ -30,6 +30,9 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
             <Link href="/agent" className="hover:text-indigo-600">
               AI Agent
             </Link>
+            <Link href="/audit" className="hover:text-indigo-600">
+              יומן ביקורת
+            </Link>
           </nav>
         </header>
         {children}
