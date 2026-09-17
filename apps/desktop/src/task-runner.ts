@@ -1,6 +1,26 @@
 import { captureScreenshot, executeAction } from "./computer-use";
 import { requestNextAction, type HistoryEntry } from "./ai/grok";
 
+export interface RunStepRecord {
+  step: number;
+  timestamp: string;
+  reasoning?: string;
+  action?: HistoryEntry["action"];
+  requiresApproval?: boolean;
+  decision?: "approved" | "rejected";
+  outcome: "executed" | "rejected" | "stopped" | "failed" | "done";
+  error?: string;
+}
+
+export interface RunRecord {
+  task: string;
+  startedAt: string;
+  finishedAt: string;
+  status: "done" | "stopped" | "rejected" | "error" | "max-steps-reached";
+  summary?: string;
+  steps: RunStepRecord[];
+}
+
 export type TaskUpdateEvent =
   | { type: "step-start"; step: number }
   | { type: "screenshot"; step: number; base64Png: string }
@@ -10,7 +30,8 @@ export type TaskUpdateEvent =
   | { type: "error"; step: number; message: string }
   | { type: "done"; summary: string }
   | { type: "stopped" }
-  | { type: "max-steps-reached" };
+  | { type: "max-steps-reached" }
+  | { type: "run-summary"; run: RunRecord };
 
 const MAX_STEPS = 40;
 const STEP_PAUSE_MS = 500;
@@ -23,10 +44,20 @@ export async function runComputerUseTask(params: {
   waitForApproval: (step: number, reasoning: string, action: HistoryEntry["action"]) => Promise<boolean>;
 }): Promise<void> {
   const history: HistoryEntry[] = [];
+  const steps: RunStepRecord[] = [];
+  const startedAt = new Date().toISOString();
+
+  function finish(status: RunRecord["status"], summary?: string): void {
+    params.onUpdate({
+      type: "run-summary",
+      run: { task: params.task, startedAt, finishedAt: new Date().toISOString(), status, summary, steps },
+    });
+  }
 
   for (let step = 1; step <= MAX_STEPS; step++) {
     if (params.shouldStop()) {
       params.onUpdate({ type: "stopped" });
+      finish("stopped");
       return;
     }
 
@@ -36,7 +67,10 @@ export async function runComputerUseTask(params: {
     try {
       screenshot = await captureScreenshot();
     } catch (err) {
-      params.onUpdate({ type: "error", step, message: `screenshot-failed: ${String(err)}` });
+      const message = `screenshot-failed: ${String(err)}`;
+      steps.push({ step, timestamp: new Date().toISOString(), outcome: "failed", error: message });
+      params.onUpdate({ type: "error", step, message });
+      finish("error", message);
       return;
     }
     params.onUpdate({ type: "screenshot", step, base64Png: screenshot.base64Png });
@@ -52,14 +86,26 @@ export async function runComputerUseTask(params: {
         history,
       });
     } catch (err) {
-      params.onUpdate({ type: "error", step, message: `ai-request-failed: ${String(err)}` });
+      const message = `ai-request-failed: ${String(err)}`;
+      steps.push({ step, timestamp: new Date().toISOString(), outcome: "failed", error: message });
+      params.onUpdate({ type: "error", step, message });
+      finish("error", message);
       return;
     }
 
     params.onUpdate({ type: "action", step, reasoning: next.reasoning, action: next.action });
 
     if (next.action.type === "done") {
+      steps.push({
+        step,
+        timestamp: new Date().toISOString(),
+        reasoning: next.reasoning,
+        action: next.action,
+        requiresApproval: false,
+        outcome: "done",
+      });
       params.onUpdate({ type: "done", summary: next.action.summary });
+      finish("done", next.action.summary);
       return;
     }
 
@@ -68,11 +114,31 @@ export async function runComputerUseTask(params: {
       const approved = await params.waitForApproval(step, next.reasoning, next.action);
 
       if (params.shouldStop()) {
+        steps.push({
+          step,
+          timestamp: new Date().toISOString(),
+          reasoning: next.reasoning,
+          action: next.action,
+          requiresApproval: true,
+          decision: approved ? "approved" : "rejected",
+          outcome: "stopped",
+        });
         params.onUpdate({ type: "stopped" });
+        finish("stopped");
         return;
       }
       if (!approved) {
+        steps.push({
+          step,
+          timestamp: new Date().toISOString(),
+          reasoning: next.reasoning,
+          action: next.action,
+          requiresApproval: true,
+          decision: "rejected",
+          outcome: "rejected",
+        });
         params.onUpdate({ type: "rejected", step });
+        finish("rejected");
         return;
       }
     }
@@ -80,13 +146,36 @@ export async function runComputerUseTask(params: {
     try {
       await executeAction(next.action);
     } catch (err) {
-      params.onUpdate({ type: "error", step, message: `action-failed: ${String(err)}` });
+      const message = `action-failed: ${String(err)}`;
+      steps.push({
+        step,
+        timestamp: new Date().toISOString(),
+        reasoning: next.reasoning,
+        action: next.action,
+        requiresApproval: next.requiresApproval,
+        decision: next.requiresApproval ? "approved" : undefined,
+        outcome: "failed",
+        error: message,
+      });
+      params.onUpdate({ type: "error", step, message });
+      finish("error", message);
       return;
     }
+
+    steps.push({
+      step,
+      timestamp: new Date().toISOString(),
+      reasoning: next.reasoning,
+      action: next.action,
+      requiresApproval: next.requiresApproval,
+      decision: next.requiresApproval ? "approved" : undefined,
+      outcome: "executed",
+    });
 
     history.push({ reasoning: next.reasoning, action: next.action });
     await new Promise((resolve) => setTimeout(resolve, STEP_PAUSE_MS));
   }
 
   params.onUpdate({ type: "max-steps-reached" });
+  finish("max-steps-reached");
 }

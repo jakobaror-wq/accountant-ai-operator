@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { RunHistory } from "@/components/RunHistory";
 
 interface LogLine {
   step: number;
@@ -44,6 +45,7 @@ export default function AgentPage() {
   const [log, setLog] = useState<LogLine[]>([]);
   const [latestScreenshot, setLatestScreenshot] = useState<string | null>(null);
   const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null);
+  const [historyRefresh, setHistoryRefresh] = useState(0);
   const logEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -97,6 +99,9 @@ export default function AgentPage() {
           setPendingApproval(null);
           setLog((prev) => [...prev, { step: 0, kind: "error", text: "הגיע למספר הצעדים המרבי בלי לסיים" }]);
           setRunning(false);
+          break;
+        case "run-summary":
+          setHistoryRefresh((n) => n + 1);
           break;
       }
     });
@@ -308,6 +313,8 @@ export default function AgentPage() {
               </div>
             </div>
           )}
+
+          <RunHistory refreshSignal={historyRefresh} />
         </div>
       )}
     </main>

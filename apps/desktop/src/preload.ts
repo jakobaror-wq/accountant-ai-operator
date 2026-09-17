@@ -14,6 +14,30 @@ export type ComputerActionRequest =
   | { type: "wait"; ms: number }
   | { type: "done"; summary: string };
 
+export interface RunStepRecord {
+  step: number;
+  timestamp: string;
+  reasoning?: string;
+  action?: ComputerActionRequest;
+  requiresApproval?: boolean;
+  decision?: "approved" | "rejected";
+  outcome: "executed" | "rejected" | "stopped" | "failed" | "done";
+  error?: string;
+}
+
+export interface RunRecord {
+  task: string;
+  startedAt: string;
+  finishedAt: string;
+  status: "done" | "stopped" | "rejected" | "error" | "max-steps-reached";
+  summary?: string;
+  steps: RunStepRecord[];
+}
+
+export interface StoredRunRecord extends RunRecord {
+  id: string;
+}
+
 export type TaskUpdateEvent =
   | { type: "step-start"; step: number }
   | { type: "screenshot"; step: number; base64Png: string }
@@ -23,7 +47,8 @@ export type TaskUpdateEvent =
   | { type: "error"; step: number; message: string }
   | { type: "done"; summary: string }
   | { type: "stopped" }
-  | { type: "max-steps-reached" };
+  | { type: "max-steps-reached" }
+  | { type: "run-summary"; run: RunRecord };
 
 export interface RunTaskResult {
   started: boolean;
@@ -48,6 +73,7 @@ const electronAPI = {
   stopTask: (): Promise<boolean> => ipcRenderer.invoke("aiop:stop-task"),
   approveAction: (): Promise<boolean> => ipcRenderer.invoke("aiop:approve-action"),
   rejectAction: (): Promise<boolean> => ipcRenderer.invoke("aiop:reject-action"),
+  listRuns: (): Promise<StoredRunRecord[]> => ipcRenderer.invoke("aiop:list-runs"),
   onTaskUpdate: (callback: (event: TaskUpdateEvent) => void): (() => void) => {
     const handler = (_event: unknown, data: TaskUpdateEvent) => callback(data);
     ipcRenderer.on("aiop:task-update", handler);

@@ -14,6 +14,30 @@ type ComputerActionRequest =
   | { type: "wait"; ms: number }
   | { type: "done"; summary: string };
 
+interface RunStepRecord {
+  step: number;
+  timestamp: string;
+  reasoning?: string;
+  action?: ComputerActionRequest;
+  requiresApproval?: boolean;
+  decision?: "approved" | "rejected";
+  outcome: "executed" | "rejected" | "stopped" | "failed" | "done";
+  error?: string;
+}
+
+interface RunRecord {
+  task: string;
+  startedAt: string;
+  finishedAt: string;
+  status: "done" | "stopped" | "rejected" | "error" | "max-steps-reached";
+  summary?: string;
+  steps: RunStepRecord[];
+}
+
+interface StoredRunRecord extends RunRecord {
+  id: string;
+}
+
 type TaskUpdateEvent =
   | { type: "step-start"; step: number }
   | { type: "screenshot"; step: number; base64Png: string }
@@ -23,7 +47,8 @@ type TaskUpdateEvent =
   | { type: "error"; step: number; message: string }
   | { type: "done"; summary: string }
   | { type: "stopped" }
-  | { type: "max-steps-reached" };
+  | { type: "max-steps-reached" }
+  | { type: "run-summary"; run: RunRecord };
 
 interface RunTaskResult {
   started: boolean;
@@ -44,6 +69,7 @@ interface ElectronAPI {
   stopTask(): Promise<boolean>;
   approveAction(): Promise<boolean>;
   rejectAction(): Promise<boolean>;
+  listRuns(): Promise<StoredRunRecord[]>;
   onTaskUpdate(callback: (event: TaskUpdateEvent) => void): () => void;
 }
 

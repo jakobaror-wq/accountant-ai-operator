@@ -4,6 +4,7 @@ import path from "node:path";
 import fs from "node:fs";
 import { getXaiApiKey, hasXaiApiKey, setXaiApiKey, clearXaiApiKey } from "./settings";
 import { runComputerUseTask, type TaskUpdateEvent } from "./task-runner";
+import { saveRun, listRuns } from "./run-history";
 
 /**
  * ברירת המחדל היא האתר החי ב-Vercel. אפשר לדרוס בזמן פיתוח מקומי:
@@ -112,6 +113,7 @@ app.whenReady().then(() => {
       task,
       shouldStop: () => stopRequested,
       onUpdate: (update: TaskUpdateEvent) => {
+        if (update.type === "run-summary") saveRun(update.run);
         if (!sender.isDestroyed()) sender.send("aiop:task-update", update);
       },
       waitForApproval: () => new Promise<boolean>((resolve) => (pendingApproval = { resolve })),
@@ -133,6 +135,8 @@ app.whenReady().then(() => {
     resolvePendingApproval(false);
     return true;
   });
+
+  ipcMain.handle("aiop:list-runs", () => listRuns());
 
   ipcMain.handle("aiop:stop-task", () => {
     if (pendingApproval) resolvePendingApproval(false);
