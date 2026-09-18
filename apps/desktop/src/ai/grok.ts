@@ -1,3 +1,5 @@
+import { net } from "electron";
+
 const XAI_BASE_URL = "https://api.x.ai/v1";
 
 /**
@@ -102,7 +104,12 @@ export async function requestNextAction(params: {
   knownScreens: string[];
   model?: string;
 }): Promise<GrokStepResult> {
-  const response = await fetch(`${XAI_BASE_URL}/chat/completions`, {
+  // net.fetch (לא ה-fetch הגלובלי של Node) - רץ על מנוע הרשת של Chromium,
+  // בדיוק כמו חלון הדפדפן של האפליקציה - אז הוא יורש אוטומטית הגדרות proxy
+  // ברמת המערכת/רשת, בניגוד ל-fetch של Node שמתעלם מהן. זה מה שהסביר מקרה
+  // שבו שאר האפליקציה (שנטענת מ-Vercel דרך אותו חלון) עובדת אבל קריאות ה-AI
+  // נכשלות עם "fetch failed" - היו יוצאות ישירות בלי לעבור דרך פרוקסי נדרש.
+  const response = await net.fetch(`${XAI_BASE_URL}/chat/completions`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
