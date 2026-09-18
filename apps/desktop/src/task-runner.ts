@@ -1,15 +1,16 @@
 import { captureScreenshot, executeAction } from "./computer-use";
-import { requestNextAction, type HistoryEntry } from "./ai/grok";
+import { requestNextAction, CONFIDENCE_THRESHOLD, type HistoryEntry } from "./ai/grok";
 
 export interface RunStepRecord {
   step: number;
   timestamp: string;
   reasoning?: string;
   screenLabel?: string;
+  confidence?: number;
   action?: HistoryEntry["action"];
   requiresApproval?: boolean;
   decision?: "approved" | "rejected";
-  outcome: "executed" | "rejected" | "stopped" | "failed" | "done";
+  outcome: "executed" | "rejected" | "stopped" | "failed" | "done" | "asked";
   error?: string;
 }
 
@@ -26,8 +27,22 @@ export interface RunRecord {
 export type TaskUpdateEvent =
   | { type: "step-start"; step: number }
   | { type: "screenshot"; step: number; base64Png: string }
-  | { type: "action"; step: number; reasoning: string; screenLabel: string; action: HistoryEntry["action"] }
-  | { type: "awaiting-approval"; step: number; reasoning: string; action: HistoryEntry["action"] }
+  | {
+      type: "action";
+      step: number;
+      reasoning: string;
+      screenLabel: string;
+      confidence: number;
+      action: HistoryEntry["action"];
+    }
+  | {
+      type: "awaiting-approval";
+      step: number;
+      reasoning: string;
+      confidence: number;
+      action: HistoryEntry["action"];
+    }
+  | { type: "awaiting-answer"; step: number; question: string }
   | { type: "rejected"; step: number }
   | { type: "error"; step: number; message: string }
   | { type: "done"; summary: string }
@@ -46,11 +61,12 @@ export async function runComputerUseTask(params: {
   onUpdate: (event: TaskUpdateEvent) => void;
   shouldStop: () => boolean;
   waitForApproval: (step: number, reasoning: string, action: HistoryEntry["action"]) => Promise<boolean>;
+  waitForAnswer: (step: number, question: string) => Promise<string>;
   /** ממשיכים ריצה שהופסקה (קריסה/סגירה) במקום להתחיל מאפס ולסכן פעולה כפולה. */
   resumeFrom?: { startedAt: string; steps: RunStepRecord[] };
 }): Promise<void> {
   const history: HistoryEntry[] = (params.resumeFrom?.steps ?? [])
-    .filter((s) => (s.outcome === "executed" || s.outcome === "done") && s.reasoning && s.action)
+    .filter((s) => (s.outcome === "executed" || s.outcome === "done" || s.outcome === "asked") && s.reasoning && s.action)
     .map((s) => ({ reasoning: s.reasoning as string, action: s.action as HistoryEntry["action"] }));
   const steps: RunStepRecord[] = params.resumeFrom ? [...params.resumeFrom.steps] : [];
   const startedAt = params.resumeFrom?.startedAt ?? new Date().toISOString();
@@ -113,7 +129,14 @@ export async function runComputerUseTask(params: {
       return;
     }
 
-    params.onUpdate({ type: "action", step, reasoning: next.reasoning, screenLabel: next.screenLabel, action: next.action });
+    params.onUpdate({
+      type: "action",
+      step,
+      reasoning: next.reasoning,
+      screenLabel: next.screenLabel,
+      confidence: next.confidence,
+      action: next.action,
+    });
 
     if (next.action.type === "done") {
       steps.push({
@@ -121,6 +144,7 @@ export async function runComputerUseTask(params: {
         timestamp: new Date().toISOString(),
         reasoning: next.reasoning,
         screenLabel: next.screenLabel,
+        confidence: next.confidence,
         action: next.action,
         requiresApproval: false,
         outcome: "done",
@@ -130,40 +154,74 @@ export async function runComputerUseTask(params: {
       return;
     }
 
-    if (next.requiresApproval) {
-      params.onUpdate({ type: "awaiting-approval", step, reasoning: next.reasoning, action: next.action });
-      const approved = await params.waitForApproval(step, next.reasoning, next.action);
+    if (next.action.type === "ask") {
+      params.onUpdate({ type: "awaiting-answer", step, question: next.action.question });
+      const answer = await params.waitForAnswer(step, next.action.question);
 
       if (params.shouldStop()) {
-        steps.push({
-          step,
-          timestamp: new Date().toISOString(),
-          reasoning: next.reasoning,
-          screenLabel: next.screenLabel,
-          action: next.action,
-          requiresApproval: true,
-          decision: approved ? "approved" : "rejected",
-          outcome: "stopped",
-        });
         params.onUpdate({ type: "stopped" });
         finish("stopped");
         return;
       }
-      if (!approved) {
-        steps.push({
-          step,
-          timestamp: new Date().toISOString(),
-          reasoning: next.reasoning,
-          screenLabel: next.screenLabel,
-          action: next.action,
-          requiresApproval: true,
-          decision: "rejected",
-          outcome: "rejected",
-        });
-        params.onUpdate({ type: "rejected", step });
-        finish("rejected");
-        return;
-      }
+
+      const qaReasoning = `שאלתי: "${next.action.question}" - המשתמש ענה: "${answer}"`;
+      steps.push({
+        step,
+        timestamp: new Date().toISOString(),
+        reasoning: qaReasoning,
+        screenLabel: next.screenLabel,
+        confidence: next.confidence,
+        action: { type: "ask", question: next.action.question },
+        requiresApproval: false,
+        outcome: "asked",
+      });
+      checkpoint();
+      history.push({ reasoning: qaReasoning, action: next.action });
+      continue;
+    }
+
+    // כל פעולה אחרת (לא ask/done) חייבת אישור אנושי מפורש לפני ביצוע - תמיד,
+    // בלי תלות בשיפוט המודל עצמו (ר' דרישה מפורשת: "אישור לפני כל פעולה אקטיבית").
+    params.onUpdate({
+      type: "awaiting-approval",
+      step,
+      reasoning: next.reasoning,
+      confidence: next.confidence,
+      action: next.action,
+    });
+    const approved = await params.waitForApproval(step, next.reasoning, next.action);
+
+    if (params.shouldStop()) {
+      steps.push({
+        step,
+        timestamp: new Date().toISOString(),
+        reasoning: next.reasoning,
+        screenLabel: next.screenLabel,
+        confidence: next.confidence,
+        action: next.action,
+        requiresApproval: true,
+        decision: approved ? "approved" : "rejected",
+        outcome: "stopped",
+      });
+      params.onUpdate({ type: "stopped" });
+      finish("stopped");
+      return;
+    }
+    if (!approved) {
+      steps.push({
+        step,
+        timestamp: new Date().toISOString(),
+        reasoning: next.reasoning,
+        screenLabel: next.screenLabel,
+        confidence: next.confidence,
+        action: next.action,
+        requiresApproval: true,
+        decision: "rejected",
+        outcome: "rejected",
+      });
+      params.onUpdate({ type: "rejected", step });
+      finish("rejected");
+      return;
     }
 
     try {
@@ -175,9 +233,10 @@ export async function runComputerUseTask(params: {
         timestamp: new Date().toISOString(),
         reasoning: next.reasoning,
         screenLabel: next.screenLabel,
+        confidence: next.confidence,
         action: next.action,
-        requiresApproval: next.requiresApproval,
-        decision: next.requiresApproval ? "approved" : undefined,
+        requiresApproval: true,
+        decision: "approved",
         outcome: "failed",
         error: message,
       });
@@ -191,9 +250,10 @@ export async function runComputerUseTask(params: {
       timestamp: new Date().toISOString(),
       reasoning: next.reasoning,
       screenLabel: next.screenLabel,
+      confidence: next.confidence,
       action: next.action,
-      requiresApproval: next.requiresApproval,
-      decision: next.requiresApproval ? "approved" : undefined,
+      requiresApproval: true,
+      decision: "approved",
       outcome: "executed",
     });
     checkpoint();
@@ -205,3 +265,5 @@ export async function runComputerUseTask(params: {
   params.onUpdate({ type: "max-steps-reached" });
   finish("max-steps-reached");
 }
+
+export { CONFIDENCE_THRESHOLD };

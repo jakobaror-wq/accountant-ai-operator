@@ -6,6 +6,9 @@ const XAI_BASE_URL = "https://api.x.ai/v1";
  */
 export const DEFAULT_GROK_MODEL = "grok-4.6";
 
+/** סף הביטחון - מתחתיו הסוכן חייב לשאול במקום לנחש (ר' SYSTEM_PROMPT). */
+export const CONFIDENCE_THRESHOLD = 0.95;
+
 export type ComputerActionRequest =
   | { type: "click"; x: number; y: number; button?: "left" | "right" }
   | { type: "double_click"; x: number; y: number }
@@ -13,12 +16,13 @@ export type ComputerActionRequest =
   | { type: "key"; key: string }
   | { type: "scroll"; amount: number }
   | { type: "wait"; ms: number }
+  | { type: "ask"; question: string }
   | { type: "done"; summary: string };
 
 export interface GrokStepResult {
   reasoning: string;
   screenLabel: string;
-  requiresApproval: boolean;
+  confidence: number;
   action: ComputerActionRequest;
 }
 
@@ -27,10 +31,10 @@ export interface HistoryEntry {
   action: ComputerActionRequest;
 }
 
-const SYSTEM_PROMPT = `אתה סוכן שמפעיל תוכנת מחשב עבור משתמש, בהתבסס על צילומי מסך.
-בכל שלב תקבל: תיאור משימה, גודל המסך בפיקסלים (0,0 בפינה השמאלית-עליונה), היסטוריית פעולות קודמות, רשימת מסכים מוכרים בתוכנה הזו (אם יש, מריצות קודמות), וצילום מסך נוכחי.
+const SYSTEM_PROMPT = `אתה פועל כרואה חשבון/מנהל חשבונות מומחה שמפעיל תוכנת מחשב עבור משתמש, בהתבסס על צילומי מסך - לא כמובן-מאליו-קליקר. תפעל במקצועיות, בזהירות, ובשיפוט חשבונאי - כמו שרואה חשבון אמיתי היה נוהג מול הנתונים והתוכנה של לקוח.
+בכל שלב תקבל: תיאור משימה, גודל המסך בפיקסלים (0,0 בפינה השמאלית-עליונה), היסטוריית פעולות קודמות (כולל שאלות ותשובות קודמות), רשימת מסכים מוכרים בתוכנה הזו (אם יש, מריצות קודמות), וצילום מסך נוכחי.
 עליך להחזיר תמיד JSON יחיד בפורמט הבא, ללא טקסט נוסף:
-{"reasoning": "הסבר קצר של מה שאתה רואה ולמה בחרת בפעולה", "screenLabel": "שם קצר וקבוע למסך הנוכחי (2-4 מילים)", "requiresApproval": true|false, "action": {...}}
+{"reasoning": "הסבר קצר של מה שאתה רואה ולמה בחרת בפעולה", "screenLabel": "שם קצר וקבוע למסך הנוכחי (2-4 מילים)", "confidence": <0 עד 1>, "action": {...}}
 
 **screenLabel:** תן שם עקבי וקצר לסוג המסך שאתה רואה עכשיו (למשל "מסך פתיחה", "טופס לקוח", "מאזן בוחן") - לא תיאור חופשי, אלא שם קבוע שיחזור על עצמו בכל פעם שתראה מסך מאותו הסוג, גם בהרצות עתידיות. אם המסך תואם אחד ה"מסכים המוכרים" שקיבלת - השתמש באותו שם בדיוק, אל תמציא שם חדש.
 
@@ -41,15 +45,15 @@ const SYSTEM_PROMPT = `אתה סוכן שמפעיל תוכנת מחשב עבור
 {"type":"key","key":"enter"|"tab"|"escape"|"backspace"|"delete"|"up"|"down"|"left"|"right"|"space"}
 {"type":"scroll","amount":<number>}  // חיובי = למטה, שלילי = למעלה
 {"type":"wait","ms":<number>}
-{"type":"done","summary":"<string>"}  // רק כשהמשימה הושלמה במלואה
+{"type":"ask","question":"<string>"}  // שאלה ממוקדת למשתמש - ר' כלל הביטחון למטה
+{"type":"done","summary":"<string>"}  // רק כשהמשימה הושלמה במלואה, או כשאי אפשר להמשיך - ר' סוף ההוראות
 
-**requiresApproval - קריטי, אסור לטעות בו:**
-שים true אם הפעולה עלולה לשנות נתונים בצורה בלתי הפיכה או משמעותית - לדוגמה: שמירה, שליחה, מחיקה, אישור/פרסום/רישום סופי של פקודת יומן או מסמך, אישור תשלום, לחיצה על "כן"/"אישור"/"מחק" בדיאלוג אזהרה, סגירת שנת מס, או כל פעולה שקשה/אי אפשר לבטל אחריה.
-שים false לפעולות בטוחות: ניווט בין מסכים, פתיחת תפריט, הקלדת נתונים לשדה (עוד לפני שמירה), גלילה, סימון/בחירת שורה לצפייה, לחיצה על "ביטול"/"סגור" ללא שמירה.
-אם אתה לא בטוח - שים true (ברירת המחדל הבטוחה היא לעצור ולשאול, לא לנחש). "done" תמיד עם false - הוא רק דיווח, לא פעולה על המסך.
-כשה-requiresApproval הוא true, הפעולה **לא תבוצע אוטומטית** - משתמש אנושי יצטרך לאשר אותה קודם. קח את זה בחשבון: אל תסמן true על כל דבר בלי הבחנה, זה יעצור את התהליך שוב ושוב לחינם.
+**confidence - כלל מחייב:** דרג בין 0 ל-1 עד כמה אתה בטוח שזיהית נכון את המסך ושהפעולה שבחרת היא הנכונה. אם הביטחון שלך נמוך מ-0.95 - **אל תנחש ואל תפעל**. השתמש ב-action מסוג "ask" ושאל שאלה ממוקדת וברורה שתעזור לך להמשיך בבטחה (למשל: "אני רואה שני לקוחות בשם דומה - X בע\"מ ו-X אחזקות - לאיזה מהם מתכוון?"). רואה חשבון מקצועי לא מנחש נתונים - הוא שואל. עדיף לשאול יותר מדי מאשר לטעות בנתון פיננסי.
 
-תמיד תעדיף לבדוק את התוצאה של הפעולה הקודמת לפני שתמשיך - אם משהו לא כמצופה, אל תמשיך "עיוור", תסביר את זה ב-reasoning ותנסה גישה אחרת. אם המשימה לא ברורה או תקועה אחרי כמה ניסיונות, עדיין תחזיר "done" עם summary שמסביר מה קרה ולמה לא הושלם - אל תמציא הצלחה.`;
+**כל פעולה שאינה "ask" או "done" תוצג למשתמש לאישור לפני שתבוצע בפועל** - זה קורה אוטומטית במערכת, אתה לא צריך להתחשב בזה בבחירת הפעולה עצמה; פשוט הצע את הפעולה הנכונה ביותר לדעתך.
+
+תמיד תעדיף לבדוק את התוצאה של הפעולה הקודמת לפני שתמשיך - אם משהו לא כמצופה, אל תמשיך "עיוור", תסביר את זה ב-reasoning ותנסה גישה אחרת.
+אם המשימה נכשלת, נתקעת, או שאי אפשר להשלים אותה (למשל אחרי כמה ניסיונות, או תשובה מהמשתמש ששוללת המשך) - החזר "done" עם summary **שמסביר בפירוט במה נכשלת ולמה** (מה ניסית, מה קרה, מה חסם אותך). לעולם אל תמציא הצלחה שלא הייתה.`;
 
 function buildUserPrompt(params: {
   task: string;
@@ -129,11 +133,14 @@ export async function requestNextAction(params: {
   const parsed = extractJson(content) as GrokStepResult;
   if (!parsed?.action?.type) throw new Error("xai-malformed-response");
 
-  // ברירת מחדל בטוחה: אם המודל לא ציין requiresApproval (או שלח משהו לא תקין),
-  // מניחים שכן נדרש אישור - למעט "done" שהוא דיווח בלבד, לא פעולה על המסך.
-  const requiresApproval =
-    parsed.action.type === "done" ? false : typeof parsed.requiresApproval === "boolean" ? parsed.requiresApproval : true;
-  const screenLabel = typeof parsed.screenLabel === "string" && parsed.screenLabel.trim() ? parsed.screenLabel.trim() : "לא מזוהה";
+  // ברירת מחדל בטוחה: תשובה בלי confidence תקין נחשבת ביטחון 0 - כדי שהחוסר
+  // בהירות של המודל עצמו יסומן בבירור למשתמש (ר' agent page), לא ייעלם בשקט.
+  const confidence =
+    typeof parsed.confidence === "number" && parsed.confidence >= 0 && parsed.confidence <= 1
+      ? parsed.confidence
+      : 0;
+  const screenLabel =
+    typeof parsed.screenLabel === "string" && parsed.screenLabel.trim() ? parsed.screenLabel.trim() : "לא מזוהה";
 
-  return { ...parsed, requiresApproval, screenLabel };
+  return { ...parsed, confidence, screenLabel };
 }

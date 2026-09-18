@@ -90,10 +90,16 @@ function createWindow(): BrowserWindow {
 let taskRunning = false;
 let stopRequested = false;
 let pendingApproval: { resolve: (approved: boolean) => void } | null = null;
+let pendingQuestion: { resolve: (answer: string) => void } | null = null;
 
 function resolvePendingApproval(approved: boolean): void {
   pendingApproval?.resolve(approved);
   pendingApproval = null;
+}
+
+function resolvePendingQuestion(answer: string): void {
+  pendingQuestion?.resolve(answer);
+  pendingQuestion = null;
 }
 
 app.whenReady().then(() => {
@@ -132,6 +138,7 @@ app.whenReady().then(() => {
           if (!sender.isDestroyed()) sender.send("aiop:task-update", update);
         },
         waitForApproval: () => new Promise<boolean>((resolve) => (pendingApproval = { resolve })),
+        waitForAnswer: () => new Promise<string>((resolve) => (pendingQuestion = { resolve })),
       }).finally(() => {
         taskRunning = false;
       });
@@ -156,10 +163,17 @@ app.whenReady().then(() => {
     return true;
   });
 
+  ipcMain.handle("aiop:answer-question", (_event, answer: string) => {
+    if (!pendingQuestion) return false;
+    resolvePendingQuestion(answer);
+    return true;
+  });
+
   ipcMain.handle("aiop:list-runs", () => listRuns());
 
   ipcMain.handle("aiop:stop-task", () => {
     if (pendingApproval) resolvePendingApproval(false);
+    if (pendingQuestion) resolvePendingQuestion("");
     stopRequested = true;
     return true;
   });

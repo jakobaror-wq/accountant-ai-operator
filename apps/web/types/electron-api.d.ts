@@ -12,6 +12,7 @@ type ComputerActionRequest =
   | { type: "key"; key: string }
   | { type: "scroll"; amount: number }
   | { type: "wait"; ms: number }
+  | { type: "ask"; question: string }
   | { type: "done"; summary: string };
 
 interface RunStepRecord {
@@ -19,10 +20,11 @@ interface RunStepRecord {
   timestamp: string;
   reasoning?: string;
   screenLabel?: string;
+  confidence?: number;
   action?: ComputerActionRequest;
   requiresApproval?: boolean;
   decision?: "approved" | "rejected";
-  outcome: "executed" | "rejected" | "stopped" | "failed" | "done";
+  outcome: "executed" | "rejected" | "stopped" | "failed" | "done" | "asked";
   error?: string;
 }
 
@@ -51,8 +53,22 @@ interface StoredRunRecord extends RunRecord {
 type TaskUpdateEvent =
   | { type: "step-start"; step: number }
   | { type: "screenshot"; step: number; base64Png: string }
-  | { type: "action"; step: number; reasoning: string; screenLabel: string; action: ComputerActionRequest }
-  | { type: "awaiting-approval"; step: number; reasoning: string; action: ComputerActionRequest }
+  | {
+      type: "action";
+      step: number;
+      reasoning: string;
+      screenLabel: string;
+      confidence: number;
+      action: ComputerActionRequest;
+    }
+  | {
+      type: "awaiting-approval";
+      step: number;
+      reasoning: string;
+      confidence: number;
+      action: ComputerActionRequest;
+    }
+  | { type: "awaiting-answer"; step: number; question: string }
   | { type: "rejected"; step: number }
   | { type: "error"; step: number; message: string }
   | { type: "done"; summary: string }
@@ -86,6 +102,7 @@ interface ElectronAPI {
   stopTask(): Promise<boolean>;
   approveAction(): Promise<boolean>;
   rejectAction(): Promise<boolean>;
+  answerQuestion(answer: string): Promise<boolean>;
   listRuns(): Promise<StoredRunRecord[]>;
   getLearnedScreens(connectorId: string): Promise<LearnedScreen[]>;
   getIncompleteRun(connectorId: string): Promise<StoredRunRecord | null>;

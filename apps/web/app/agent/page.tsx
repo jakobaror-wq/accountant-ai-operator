@@ -14,8 +14,16 @@ interface LogLine {
 interface PendingApproval {
   step: number;
   reasoning: string;
+  confidence: number;
   actionLabel: string;
 }
+
+interface PendingQuestion {
+  step: number;
+  question: string;
+}
+
+const CONFIDENCE_WARNING_THRESHOLD = 0.95;
 
 type StoredRunRecord = NonNullable<Awaited<ReturnType<NonNullable<Window["electronAPI"]>["getIncompleteRun"]>>>;
 
@@ -50,6 +58,8 @@ export default function AgentPage() {
   const [log, setLog] = useState<LogLine[]>([]);
   const [latestScreenshot, setLatestScreenshot] = useState<string | null>(null);
   const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null);
+  const [pendingQuestion, setPendingQuestion] = useState<PendingQuestion | null>(null);
+  const [answerInput, setAnswerInput] = useState("");
   const [historyRefresh, setHistoryRefresh] = useState(0);
   const [incompleteRun, setIncompleteRun] = useState<StoredRunRecord | null>(null);
   const logEndRef = useRef<HTMLDivElement>(null);
@@ -68,22 +78,30 @@ export default function AgentPage() {
         case "screenshot":
           setLatestScreenshot(event.base64Png);
           break;
-        case "action":
+        case "action": {
+          const confidencePct = Math.round(event.confidence * 100);
+          const lowConfidence = event.confidence < CONFIDENCE_WARNING_THRESHOLD ? " ⚠️" : "";
           setLog((prev) => [
             ...prev,
             {
               step: event.step,
               kind: "reasoning",
-              text: `[${event.screenLabel}] ${event.reasoning} → ${event.action.type}`,
+              text: `[${event.screenLabel}, ביטחון ${confidencePct}%${lowConfidence}] ${event.reasoning} → ${event.action.type}`,
             },
           ]);
           break;
+        }
         case "awaiting-approval":
           setPendingApproval({
             step: event.step,
             reasoning: event.reasoning,
+            confidence: event.confidence,
             actionLabel: describeAction(event.action),
           });
+          break;
+        case "awaiting-answer":
+          setPendingQuestion({ step: event.step, question: event.question });
+          setLog((prev) => [...prev, { step: event.step, kind: "status", text: `שאלה מה-AI: ${event.question}` }]);
           break;
         case "rejected":
           setPendingApproval(null);
@@ -92,21 +110,25 @@ export default function AgentPage() {
           break;
         case "error":
           setPendingApproval(null);
+          setPendingQuestion(null);
           setLog((prev) => [...prev, { step: event.step, kind: "error", text: event.message }]);
           setRunning(false);
           break;
         case "done":
           setPendingApproval(null);
+          setPendingQuestion(null);
           setLog((prev) => [...prev, { step: 0, kind: "status", text: `הושלם: ${event.summary}` }]);
           setRunning(false);
           break;
         case "stopped":
           setPendingApproval(null);
+          setPendingQuestion(null);
           setLog((prev) => [...prev, { step: 0, kind: "status", text: "נעצר על ידי המשתמש" }]);
           setRunning(false);
           break;
         case "max-steps-reached":
           setPendingApproval(null);
+          setPendingQuestion(null);
           setLog((prev) => [...prev, { step: 0, kind: "error", text: "הגיע למספר הצעדים המרבי בלי לסיים" }]);
           setRunning(false);
           break;
@@ -160,6 +182,7 @@ export default function AgentPage() {
     setLog([]);
     setLatestScreenshot(null);
     setPendingApproval(null);
+    setPendingQuestion(null);
     setIncompleteRun(null);
     const result = await window.electronAPI.runTask(task.trim(), connectorId);
     if (result.started) {
@@ -180,6 +203,7 @@ export default function AgentPage() {
     setLog([]);
     setLatestScreenshot(null);
     setPendingApproval(null);
+    setPendingQuestion(null);
     setTask(incompleteRun.task);
     const result = await window.electronAPI.runTask(incompleteRun.task, connectorId, incompleteRun.id);
     setIncompleteRun(null);
@@ -201,6 +225,15 @@ export default function AgentPage() {
     if (!window.electronAPI) return;
     setPendingApproval(null);
     await window.electronAPI.rejectAction();
+  }
+
+  async function handleAnswerSubmit() {
+    if (!window.electronAPI || !answerInput.trim()) return;
+    const answer = answerInput.trim();
+    setAnswerInput("");
+    setPendingQuestion(null);
+    setLog((prev) => [...prev, { step: 0, kind: "status", text: `התשובה שלך: ${answer}` }]);
+    await window.electronAPI.answerQuestion(answer);
   }
 
   if (!isElectron) {
@@ -340,7 +373,19 @@ export default function AgentPage() {
 
           {pendingApproval && (
             <div className="rounded-xl border border-amber-300 bg-amber-50 p-5">
-              <h2 className="font-semibold text-amber-900">נדרש אישור לפני ביצוע</h2>
+              <div className="flex items-center justify-between gap-2">
+                <h2 className="font-semibold text-amber-900">נדרש אישור לפני ביצוע</h2>
+                <span
+                  className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                    pendingApproval.confidence < CONFIDENCE_WARNING_THRESHOLD
+                      ? "bg-red-100 text-red-700"
+                      : "bg-emerald-100 text-emerald-700"
+                  }`}
+                >
+                  ביטחון {Math.round(pendingApproval.confidence * 100)}%
+                  {pendingApproval.confidence < CONFIDENCE_WARNING_THRESHOLD && " - נמוך, בדוק היטב"}
+                </span>
+              </div>
               <p className="mt-1 text-sm text-amber-900">{pendingApproval.reasoning}</p>
               <p className="mt-2 text-sm font-medium text-amber-900">
                 הפעולה המוצעת: {pendingApproval.actionLabel}
@@ -359,6 +404,31 @@ export default function AgentPage() {
                   className="rounded-lg border border-red-300 px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-50"
                 >
                   דחה ועצור
+                </button>
+              </div>
+            </div>
+          )}
+
+          {pendingQuestion && (
+            <div className="rounded-xl border border-indigo-300 bg-indigo-50 p-5">
+              <h2 className="font-semibold text-indigo-900">ה-AI זקוק לתשובה כדי להמשיך</h2>
+              <p className="mt-1 text-sm text-indigo-900">{pendingQuestion.question}</p>
+              <div className="mt-3 flex gap-2">
+                <input
+                  type="text"
+                  value={answerInput}
+                  onChange={(e) => setAnswerInput(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && handleAnswerSubmit()}
+                  placeholder="הקלד/י תשובה..."
+                  className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                />
+                <button
+                  type="button"
+                  onClick={handleAnswerSubmit}
+                  disabled={!answerInput.trim()}
+                  className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+                >
+                  שלח תשובה
                 </button>
               </div>
             </div>

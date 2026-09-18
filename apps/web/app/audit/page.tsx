@@ -134,7 +134,9 @@ export default function AuditPage() {
             <ol className="mt-2 flex flex-col gap-1 text-xs text-slate-500">
               {run.steps.map((step) => (
                 <li key={step.step}>
-                  {step.step}. [{step.screenLabel ?? "?"}] {step.reasoning ?? step.error ?? step.outcome}
+                  {step.step}. [{step.screenLabel ?? "?"}
+                  {typeof step.confidence === "number" && `, ביטחון ${Math.round(step.confidence * 100)}%`}]{" "}
+                  {step.reasoning ?? step.error ?? step.outcome}
                   {step.action && ` → ${step.action.type}`}
                   {step.decision && ` (${step.decision === "approved" ? "אושר" : "נדחה"})`}
                 </li>
