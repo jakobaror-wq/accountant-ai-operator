@@ -30,6 +30,11 @@ export const CONNECTORS: ConnectorDefinition[] = [
     name: "קונטו",
     description: "עריכת דוחות כספיים",
   },
+  {
+    id: "dokka",
+    name: "Dokka",
+    description: "עיבוד מסמכים וחשבוניות",
+  },
 ];
 
 export function getConnectorById(id: string): ConnectorDefinition | undefined {
