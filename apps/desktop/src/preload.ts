@@ -98,6 +98,8 @@ export interface AgentStatus {
 const electronAPI = {
   isElectron: true as const,
 
+  getAppVersion: (): Promise<string> => ipcRenderer.invoke("aiop:get-app-version"),
+
   getConnectorPaths: (): Promise<Record<string, string>> =>
     ipcRenderer.invoke("aiop:get-connector-paths"),
   pickExecutable: (connectorId: string): Promise<string | null> =>

@@ -141,6 +141,8 @@ function getAgentStatus(): AgentStatus {
 }
 
 app.whenReady().then(() => {
+  ipcMain.handle("aiop:get-app-version", () => app.getVersion());
+
   ipcMain.handle("aiop:get-connector-paths", () => readConnectorPaths());
 
   ipcMain.handle("aiop:get-xai-key-status", () => hasXaiApiKey());

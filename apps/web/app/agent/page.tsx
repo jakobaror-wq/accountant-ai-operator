@@ -69,6 +69,7 @@ export default function AgentPage() {
   const [incompleteRun, setIncompleteRun] = useState<StoredRunRecord | null>(null);
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [queueHalted, setQueueHalted] = useState(false);
+  const [appVersion, setAppVersion] = useState<string | null>(null);
   const logEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -76,6 +77,7 @@ export default function AgentPage() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setIsElectron(true);
     window.electronAPI.getXaiKeyStatus().then(setHasKey);
+    window.electronAPI.getAppVersion().then(setAppVersion);
 
     // משחזר מצב אם משימה כבר רצה ברקע (תהליך הראשי) - למשל אחרי ניווט למסך
     // אחר וחזרה לכאן; ה-state של React מתאפס בכל mount, אבל המשימה בפועל
@@ -337,7 +339,10 @@ export default function AgentPage() {
 
   return (
     <main className="mx-auto w-full max-w-4xl flex-1 px-6 py-10">
-      <h1 className="text-2xl font-bold text-slate-900">AI Agent</h1>
+      <div className="flex items-baseline justify-between gap-2">
+        <h1 className="text-2xl font-bold text-slate-900">AI Agent</h1>
+        {appVersion && <span className="text-xs text-slate-400" dir="ltr">גרסה {appVersion}</span>}
+      </div>
       <p className="mt-2 text-sm text-slate-600">
         תן משימה, וה-AI יפעיל את התוכנות המקומיות בעצמו: מצלם מסך, מחליט מה השלב הבא, ומבצע.
       </p>

@@ -97,6 +97,7 @@ interface AgentStatus {
 
 interface ElectronAPI {
   isElectron: true;
+  getAppVersion(): Promise<string>;
   getConnectorPaths(): Promise<Record<string, string>>;
   pickExecutable(connectorId: string): Promise<string | null>;
   launchExecutable(connectorId: string): Promise<LaunchResult>;
