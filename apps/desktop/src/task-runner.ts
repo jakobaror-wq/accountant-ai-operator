@@ -180,48 +180,50 @@ export async function runComputerUseTask(params: {
       continue;
     }
 
-    // כל פעולה אחרת (לא ask/done) חייבת אישור אנושי מפורש לפני ביצוע - תמיד,
-    // בלי תלות בשיפוט המודל עצמו (ר' דרישה מפורשת: "אישור לפני כל פעולה אקטיבית").
-    params.onUpdate({
-      type: "awaiting-approval",
-      step,
-      reasoning: next.reasoning,
-      confidence: next.confidence,
-      action: next.action,
-    });
-    const approved = await params.waitForApproval(step, next.reasoning, next.action);
+    // רק פעולות שמשנות נתון בתוך התוכנה דורשות אישור אנושי מפורש - שאיבת מידע,
+    // ניווט וייצוא קבצים זורמים חופשי (ר' דרישה מפורשת + criteria ב-grok.ts).
+    if (next.requiresApproval) {
+      params.onUpdate({
+        type: "awaiting-approval",
+        step,
+        reasoning: next.reasoning,
+        confidence: next.confidence,
+        action: next.action,
+      });
+      const approved = await params.waitForApproval(step, next.reasoning, next.action);
 
-    if (params.shouldStop()) {
-      steps.push({
-        step,
-        timestamp: new Date().toISOString(),
-        reasoning: next.reasoning,
-        screenLabel: next.screenLabel,
-        confidence: next.confidence,
-        action: next.action,
-        requiresApproval: true,
-        decision: approved ? "approved" : "rejected",
-        outcome: "stopped",
-      });
-      params.onUpdate({ type: "stopped" });
-      finish("stopped");
-      return;
-    }
-    if (!approved) {
-      steps.push({
-        step,
-        timestamp: new Date().toISOString(),
-        reasoning: next.reasoning,
-        screenLabel: next.screenLabel,
-        confidence: next.confidence,
-        action: next.action,
-        requiresApproval: true,
-        decision: "rejected",
-        outcome: "rejected",
-      });
-      params.onUpdate({ type: "rejected", step });
-      finish("rejected");
-      return;
+      if (params.shouldStop()) {
+        steps.push({
+          step,
+          timestamp: new Date().toISOString(),
+          reasoning: next.reasoning,
+          screenLabel: next.screenLabel,
+          confidence: next.confidence,
+          action: next.action,
+          requiresApproval: true,
+          decision: approved ? "approved" : "rejected",
+          outcome: "stopped",
+        });
+        params.onUpdate({ type: "stopped" });
+        finish("stopped");
+        return;
+      }
+      if (!approved) {
+        steps.push({
+          step,
+          timestamp: new Date().toISOString(),
+          reasoning: next.reasoning,
+          screenLabel: next.screenLabel,
+          confidence: next.confidence,
+          action: next.action,
+          requiresApproval: true,
+          decision: "rejected",
+          outcome: "rejected",
+        });
+        params.onUpdate({ type: "rejected", step });
+        finish("rejected");
+        return;
+      }
     }
 
     try {
@@ -235,8 +237,8 @@ export async function runComputerUseTask(params: {
         screenLabel: next.screenLabel,
         confidence: next.confidence,
         action: next.action,
-        requiresApproval: true,
-        decision: "approved",
+        requiresApproval: next.requiresApproval,
+        decision: next.requiresApproval ? "approved" : undefined,
         outcome: "failed",
         error: message,
       });
@@ -252,8 +254,8 @@ export async function runComputerUseTask(params: {
       screenLabel: next.screenLabel,
       confidence: next.confidence,
       action: next.action,
-      requiresApproval: true,
-      decision: "approved",
+      requiresApproval: next.requiresApproval,
+      decision: next.requiresApproval ? "approved" : undefined,
       outcome: "executed",
     });
     checkpoint();
