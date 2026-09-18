@@ -4,6 +4,7 @@ import path from "node:path";
 import fs from "node:fs";
 import { getXaiApiKey, hasXaiApiKey, setXaiApiKey, clearXaiApiKey } from "./settings";
 import { runComputerUseTask, type TaskUpdateEvent } from "./task-runner";
+import type { ComputerActionRequest } from "./ai/grok";
 import { saveRun, listRuns, getRun, findIncompleteRun } from "./run-history";
 import { getLearnedScreens, recordScreen } from "./screen-memory";
 
@@ -89,8 +90,16 @@ function createWindow(): BrowserWindow {
 
 let taskRunning = false;
 let stopRequested = false;
-let pendingApproval: { resolve: (approved: boolean) => void } | null = null;
-let pendingQuestion: { resolve: (answer: string) => void } | null = null;
+let currentConnectorId: string | null = null;
+let currentTask: string | null = null;
+let pendingApproval: {
+  step: number;
+  reasoning: string;
+  confidence: number;
+  action: ComputerActionRequest;
+  resolve: (approved: boolean) => void;
+} | null = null;
+let pendingQuestion: { step: number; question: string; resolve: (answer: string) => void } | null = null;
 
 function resolvePendingApproval(approved: boolean): void {
   pendingApproval?.resolve(approved);
@@ -100,6 +109,35 @@ function resolvePendingApproval(approved: boolean): void {
 function resolvePendingQuestion(answer: string): void {
   pendingQuestion?.resolve(answer);
   pendingQuestion = null;
+}
+
+interface AgentStatus {
+  running: boolean;
+  connectorId: string | null;
+  task: string | null;
+  pendingApproval: { step: number; reasoning: string; confidence: number; action: ComputerActionRequest } | null;
+  pendingQuestion: { step: number; question: string } | null;
+}
+
+/**
+ * מאפשר לחלון (renderer) לסנכרן מחדש את המצב שלו כשהוא נטען/נטען-מחדש -
+ * למשל אחרי ניווט למסך אחר וחזרה - בזמן שמשימה עדיין רצה ברקע בתהליך הראשי.
+ */
+function getAgentStatus(): AgentStatus {
+  return {
+    running: taskRunning,
+    connectorId: currentConnectorId,
+    task: currentTask,
+    pendingApproval: pendingApproval
+      ? {
+          step: pendingApproval.step,
+          reasoning: pendingApproval.reasoning,
+          confidence: pendingApproval.confidence,
+          action: pendingApproval.action,
+        }
+      : null,
+    pendingQuestion: pendingQuestion ? { step: pendingQuestion.step, question: pendingQuestion.question } : null,
+  };
 }
 
 app.whenReady().then(() => {
@@ -124,6 +162,8 @@ app.whenReady().then(() => {
       const sender = event.sender;
       taskRunning = true;
       stopRequested = false;
+      currentConnectorId = connectorId;
+      currentTask = task;
 
       void runComputerUseTask({
         apiKey,
@@ -137,15 +177,25 @@ app.whenReady().then(() => {
           if (update.type === "run-summary") saveRun(update.run);
           if (!sender.isDestroyed()) sender.send("aiop:task-update", update);
         },
-        waitForApproval: () => new Promise<boolean>((resolve) => (pendingApproval = { resolve })),
-        waitForAnswer: () => new Promise<string>((resolve) => (pendingQuestion = { resolve })),
+        waitForApproval: (step, reasoning, confidence, action) =>
+          new Promise<boolean>((resolve) => {
+            pendingApproval = { step, reasoning, confidence, action, resolve };
+          }),
+        waitForAnswer: (step, question) =>
+          new Promise<string>((resolve) => {
+            pendingQuestion = { step, question, resolve };
+          }),
       }).finally(() => {
         taskRunning = false;
+        currentConnectorId = null;
+        currentTask = null;
       });
 
       return { started: true };
     },
   );
+
+  ipcMain.handle("aiop:get-agent-status", () => getAgentStatus());
 
   ipcMain.handle("aiop:get-learned-screens", (_event, connectorId: string) => getLearnedScreens(connectorId));
 

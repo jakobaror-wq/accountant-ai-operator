@@ -87,6 +87,14 @@ interface ResolveDroppedPathResult {
   error?: "invalid-shortcut" | "target-not-found";
 }
 
+interface AgentStatus {
+  running: boolean;
+  connectorId: string | null;
+  task: string | null;
+  pendingApproval: { step: number; reasoning: string; confidence: number; action: ComputerActionRequest } | null;
+  pendingQuestion: { step: number; question: string } | null;
+}
+
 interface ElectronAPI {
   isElectron: true;
   getConnectorPaths(): Promise<Record<string, string>>;
@@ -106,6 +114,7 @@ interface ElectronAPI {
   listRuns(): Promise<StoredRunRecord[]>;
   getLearnedScreens(connectorId: string): Promise<LearnedScreen[]>;
   getIncompleteRun(connectorId: string): Promise<StoredRunRecord | null>;
+  getAgentStatus(): Promise<AgentStatus>;
   onTaskUpdate(callback: (event: TaskUpdateEvent) => void): () => void;
 }
 

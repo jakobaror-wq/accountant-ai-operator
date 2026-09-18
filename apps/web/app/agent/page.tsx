@@ -23,6 +23,11 @@ interface PendingQuestion {
   question: string;
 }
 
+interface QueueItem {
+  task: string;
+  connectorId: string;
+}
+
 const CONFIDENCE_WARNING_THRESHOLD = 0.95;
 
 type StoredRunRecord = NonNullable<Awaited<ReturnType<NonNullable<Window["electronAPI"]>["getIncompleteRun"]>>>;
@@ -62,6 +67,8 @@ export default function AgentPage() {
   const [answerInput, setAnswerInput] = useState("");
   const [historyRefresh, setHistoryRefresh] = useState(0);
   const [incompleteRun, setIncompleteRun] = useState<StoredRunRecord | null>(null);
+  const [queue, setQueue] = useState<QueueItem[]>([]);
+  const [queueHalted, setQueueHalted] = useState(false);
   const logEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -69,6 +76,27 @@ export default function AgentPage() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setIsElectron(true);
     window.electronAPI.getXaiKeyStatus().then(setHasKey);
+
+    // משחזר מצב אם משימה כבר רצה ברקע (תהליך הראשי) - למשל אחרי ניווט למסך
+    // אחר וחזרה לכאן; ה-state של React מתאפס בכל mount, אבל המשימה בפועל
+    // ממשיכה לרוץ ב-main process בלי קשר למה שמוצג על המסך.
+    window.electronAPI.getAgentStatus().then((status) => {
+      if (!status.running) return;
+      setRunning(true);
+      if (status.connectorId) setConnectorId(status.connectorId);
+      if (status.task) setTask(status.task);
+      if (status.pendingApproval) {
+        setPendingApproval({
+          step: status.pendingApproval.step,
+          reasoning: status.pendingApproval.reasoning,
+          confidence: status.pendingApproval.confidence,
+          actionLabel: describeAction(status.pendingApproval.action),
+        });
+      }
+      if (status.pendingQuestion) {
+        setPendingQuestion({ step: status.pendingQuestion.step, question: status.pendingQuestion.question });
+      }
+    });
 
     const unsubscribe = window.electronAPI.onTaskUpdate((event) => {
       switch (event.type) {
@@ -107,30 +135,35 @@ export default function AgentPage() {
           setPendingApproval(null);
           setLog((prev) => [...prev, { step: event.step, kind: "status", text: "הפעולה נדחתה - המשימה נעצרה" }]);
           setRunning(false);
+          setQueueHalted(true);
           break;
         case "error":
           setPendingApproval(null);
           setPendingQuestion(null);
           setLog((prev) => [...prev, { step: event.step, kind: "error", text: event.message }]);
           setRunning(false);
+          setQueueHalted(true);
           break;
         case "done":
           setPendingApproval(null);
           setPendingQuestion(null);
           setLog((prev) => [...prev, { step: 0, kind: "status", text: `הושלם: ${event.summary}` }]);
           setRunning(false);
+          setQueueHalted(false);
           break;
         case "stopped":
           setPendingApproval(null);
           setPendingQuestion(null);
           setLog((prev) => [...prev, { step: 0, kind: "status", text: "נעצר על ידי המשתמש" }]);
           setRunning(false);
+          setQueueHalted(true);
           break;
         case "max-steps-reached":
           setPendingApproval(null);
           setPendingQuestion(null);
           setLog((prev) => [...prev, { step: 0, kind: "error", text: "הגיע למספר הצעדים המרבי בלי לסיים" }]);
           setRunning(false);
+          setQueueHalted(true);
           break;
         case "run-summary":
           setHistoryRefresh((n) => n + 1);
@@ -184,6 +217,7 @@ export default function AgentPage() {
     setPendingApproval(null);
     setPendingQuestion(null);
     setIncompleteRun(null);
+    setQueueHalted(false);
     const result = await window.electronAPI.runTask(task.trim(), connectorId);
     if (result.started) {
       setRunning(true);
@@ -197,6 +231,57 @@ export default function AgentPage() {
       ]);
     }
   }
+
+  async function startQueuedTask(item: QueueItem) {
+    if (!window.electronAPI) return;
+    setTask(item.task);
+    setConnectorId(item.connectorId);
+    setLog([]);
+    setLatestScreenshot(null);
+    setPendingApproval(null);
+    setPendingQuestion(null);
+    setIncompleteRun(null);
+    setQueueHalted(false);
+    const result = await window.electronAPI.runTask(item.task, item.connectorId);
+    if (result.started) {
+      setRunning(true);
+    } else {
+      setLog([
+        {
+          step: 0,
+          kind: "error",
+          text: result.error === "no-api-key" ? "לא הוגדר מפתח API" : "משימה כבר רצה",
+        },
+      ]);
+      setQueueHalted(true);
+    }
+  }
+
+  function handleAddToQueue() {
+    if (!task.trim() || !connectorId) return;
+    setQueue((prev) => [...prev, { task: task.trim(), connectorId }]);
+    setTask("");
+  }
+
+  function handleRemoveFromQueue(index: number) {
+    setQueue((prev) => prev.filter((_, i) => i !== index));
+  }
+
+  function handleClearQueue() {
+    setQueue([]);
+    setQueueHalted(false);
+  }
+
+  // מריץ אוטומטית את הפעולה הבאה בתור, אבל רק אם הריצה הקודמת הסתיימה נקי
+  // ("done") - כל סטטוס סיום אחר (שגיאה/נדחה/נעצר/הגיע למקסימום צעדים) עוצר
+  // את התור לבדיקה ידנית, כדי לא להמשיך "עיוור" אחרי תקלה.
+  useEffect(() => {
+    if (running || queueHalted || queue.length === 0 || !window.electronAPI) return;
+    const [next, ...rest] = queue;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- מדלג את התור לפני הרצת הפריט הבא, לא רק סנכרון תצוגה
+    setQueue(rest);
+    void startQueuedTask(next);
+  }, [running, queueHalted, queue]);
 
   async function handleResume() {
     if (!window.electronAPI || !incompleteRun || !connectorId) return;
@@ -369,7 +454,57 @@ export default function AgentPage() {
                 עצור
               </button>
             )}
+            <button
+              type="button"
+              onClick={handleAddToQueue}
+              disabled={!task.trim() || !connectorId}
+              className="rounded-lg border border-slate-300 px-5 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+            >
+              הוסף לתור
+            </button>
           </div>
+
+          {queue.length > 0 && (
+            <div className="rounded-xl border border-slate-200 bg-white p-4">
+              <div className="flex items-center justify-between">
+                <h2 className="text-sm font-semibold text-slate-800">
+                  תור משימות ({queue.length}) - ירוצו אוטומטית אחת אחרי השנייה
+                </h2>
+                <button type="button" onClick={handleClearQueue} className="text-xs text-red-600 underline">
+                  נקה תור
+                </button>
+              </div>
+              <ol className="mt-2 flex flex-col gap-1 text-sm">
+                {queue.map((item, i) => (
+                  <li key={i} className="flex items-center justify-between gap-2 text-slate-600">
+                    <span className="truncate">
+                      {i + 1}. [{CONNECTORS.find((c) => c.id === item.connectorId)?.name ?? item.connectorId}]{" "}
+                      {item.task}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveFromQueue(i)}
+                      className="shrink-0 text-xs text-red-600 underline"
+                    >
+                      הסר
+                    </button>
+                  </li>
+                ))}
+              </ol>
+              {queueHalted && (
+                <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+                  התור הושהה - הריצה האחרונה לא הסתיימה בהצלחה. בדוק/י את הפלט למעלה, ואז אפשר להמשיך.
+                  <button
+                    type="button"
+                    onClick={() => setQueueHalted(false)}
+                    className="mr-2 font-medium text-indigo-700 underline"
+                  >
+                    המשך תור
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
 
           {pendingApproval && (
             <div className="rounded-xl border border-amber-300 bg-amber-50 p-5">

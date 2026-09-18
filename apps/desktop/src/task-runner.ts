@@ -53,6 +53,20 @@ export type TaskUpdateEvent =
 const MAX_STEPS = 40;
 const STEP_PAUSE_MS = 500;
 
+/**
+ * שגיאות רשת (fetch failed וכו') מסתירות את הסיבה האמיתית מאחורי err.cause
+ * (ENOTFOUND/ECONNREFUSED/תעודת TLS/פרוקסי) - בלי זה המשתמש רואה רק
+ * "TypeError: fetch failed" בלי שום רמז לאבחון.
+ */
+function describeError(err: unknown): string {
+  if (err instanceof Error) {
+    const cause = (err as Error & { cause?: unknown }).cause;
+    const causeText = cause instanceof Error ? `: ${cause.message}` : cause ? `: ${String(cause)}` : "";
+    return `${err.name}: ${err.message}${causeText}`;
+  }
+  return String(err);
+}
+
 export async function runComputerUseTask(params: {
   apiKey: string;
   task: string;
@@ -60,7 +74,12 @@ export async function runComputerUseTask(params: {
   knownScreens: string[];
   onUpdate: (event: TaskUpdateEvent) => void;
   shouldStop: () => boolean;
-  waitForApproval: (step: number, reasoning: string, action: HistoryEntry["action"]) => Promise<boolean>;
+  waitForApproval: (
+    step: number,
+    reasoning: string,
+    confidence: number,
+    action: HistoryEntry["action"],
+  ) => Promise<boolean>;
   waitForAnswer: (step: number, question: string) => Promise<string>;
   /** ממשיכים ריצה שהופסקה (קריסה/סגירה) במקום להתחיל מאפס ולסכן פעולה כפולה. */
   resumeFrom?: { startedAt: string; steps: RunStepRecord[] };
@@ -102,7 +121,7 @@ export async function runComputerUseTask(params: {
     try {
       screenshot = await captureScreenshot();
     } catch (err) {
-      const message = `screenshot-failed: ${String(err)}`;
+      const message = `screenshot-failed: ${describeError(err)}`;
       steps.push({ step, timestamp: new Date().toISOString(), outcome: "failed", error: message });
       params.onUpdate({ type: "error", step, message });
       finish("error", message);
@@ -122,7 +141,7 @@ export async function runComputerUseTask(params: {
         knownScreens: params.knownScreens,
       });
     } catch (err) {
-      const message = `ai-request-failed: ${String(err)}`;
+      const message = `ai-request-failed: ${describeError(err)}`;
       steps.push({ step, timestamp: new Date().toISOString(), outcome: "failed", error: message });
       params.onUpdate({ type: "error", step, message });
       finish("error", message);
@@ -190,7 +209,7 @@ export async function runComputerUseTask(params: {
         confidence: next.confidence,
         action: next.action,
       });
-      const approved = await params.waitForApproval(step, next.reasoning, next.action);
+      const approved = await params.waitForApproval(step, next.reasoning, next.confidence, next.action);
 
       if (params.shouldStop()) {
         steps.push({
@@ -229,7 +248,7 @@ export async function runComputerUseTask(params: {
     try {
       await executeAction(next.action);
     } catch (err) {
-      const message = `action-failed: ${String(err)}`;
+      const message = `action-failed: ${describeError(err)}`;
       steps.push({
         step,
         timestamp: new Date().toISOString(),

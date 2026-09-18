@@ -87,6 +87,14 @@ export interface ResolveDroppedPathResult {
   error?: "invalid-shortcut" | "target-not-found";
 }
 
+export interface AgentStatus {
+  running: boolean;
+  connectorId: string | null;
+  task: string | null;
+  pendingApproval: { step: number; reasoning: string; confidence: number; action: ComputerActionRequest } | null;
+  pendingQuestion: { step: number; question: string } | null;
+}
+
 const electronAPI = {
   isElectron: true as const,
 
@@ -114,6 +122,7 @@ const electronAPI = {
     ipcRenderer.invoke("aiop:get-learned-screens", connectorId),
   getIncompleteRun: (connectorId: string): Promise<StoredRunRecord | null> =>
     ipcRenderer.invoke("aiop:get-incomplete-run", connectorId),
+  getAgentStatus: (): Promise<AgentStatus> => ipcRenderer.invoke("aiop:get-agent-status"),
   onTaskUpdate: (callback: (event: TaskUpdateEvent) => void): (() => void) => {
     const handler = (_event: unknown, data: TaskUpdateEvent) => callback(data);
     ipcRenderer.on("aiop:task-update", handler);
