@@ -1,5 +1,5 @@
 import { captureScreenshot, executeAction } from "./computer-use";
-import { requestNextAction, CONFIDENCE_THRESHOLD, type HistoryEntry } from "./ai/grok";
+import { requestNextAction, CONFIDENCE_THRESHOLD, type HistoryEntry, type GrokStepResult } from "./ai/grok";
 import { getConnectorCredentials } from "./settings";
 
 export interface RunStepRecord {
@@ -69,6 +69,37 @@ function scaleActionToRealScreen(
     return { ...action, x: Math.round(action.x * scaleX), y: Math.round(action.y * scaleY) };
   }
   return action;
+}
+
+const MAX_AI_RETRIES = 2;
+const AI_RETRY_DELAY_MS = 1500;
+
+/**
+ * מבחין בין שגיאות חולפות (תקלת רשת, תקלת שרת זמנית, תשובה ריקה/פגומה חד-
+ * פעמית) לבין שגיאות שלא ישתפרו מניסיון חוזר (מפתח API שגוי, בקשה לא
+ * תקינה) - retry על הסוג השני רק מבזבז זמן ומעכב את הדיווח האמיתי למשתמש.
+ */
+function isRetryableAiError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const statusMatch = err.message.match(/^xai-error:(\d+):/);
+  if (statusMatch) {
+    const status = Number(statusMatch[1]);
+    return status === 429 || status >= 500;
+  }
+  return true;
+}
+
+async function requestNextActionWithRetry(
+  params: Parameters<typeof requestNextAction>[0],
+): Promise<GrokStepResult> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await requestNextAction(params);
+    } catch (err) {
+      if (attempt >= MAX_AI_RETRIES || !isRetryableAiError(err)) throw err;
+      await new Promise((resolve) => setTimeout(resolve, AI_RETRY_DELAY_MS));
+    }
+  }
 }
 
 function describeError(err: unknown): string {
@@ -144,7 +175,7 @@ export async function runComputerUseTask(params: {
 
     let next;
     try {
-      next = await requestNextAction({
+      next = await requestNextActionWithRetry({
         apiKey: params.apiKey,
         task: params.task,
         screenshotBase64: screenshot.visionBase64Png,
