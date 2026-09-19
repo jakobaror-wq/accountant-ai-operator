@@ -58,6 +58,18 @@ const STEP_PAUSE_MS = 500;
  * (ENOTFOUND/ECONNREFUSED/תעודת TLS/פרוקסי) - בלי זה המשתמש רואה רק
  * "TypeError: fetch failed" בלי שום רמז לאבחון.
  */
+function scaleActionToRealScreen(
+  action: HistoryEntry["action"],
+  scaleX: number,
+  scaleY: number,
+): HistoryEntry["action"] {
+  if (scaleX === 1 && scaleY === 1) return action;
+  if (action.type === "click" || action.type === "double_click") {
+    return { ...action, x: Math.round(action.x * scaleX), y: Math.round(action.y * scaleY) };
+  }
+  return action;
+}
+
 function describeError(err: unknown): string {
   if (err instanceof Error) {
     const cause = (err as Error & { cause?: unknown }).cause;
@@ -134,9 +146,9 @@ export async function runComputerUseTask(params: {
       next = await requestNextAction({
         apiKey: params.apiKey,
         task: params.task,
-        screenshotBase64: screenshot.base64Png,
-        screenWidth: screenshot.width,
-        screenHeight: screenshot.height,
+        screenshotBase64: screenshot.visionBase64Png,
+        screenWidth: screenshot.visionWidth,
+        screenHeight: screenshot.visionHeight,
         history,
         knownScreens: params.knownScreens,
       });
@@ -147,6 +159,15 @@ export async function runComputerUseTask(params: {
       finish("error", message);
       return;
     }
+
+    // המודל רואה צילום מסך מוקטן (ר' computer-use.ts) ומחזיר קואורדינטות באותו
+    // מרחב מוקטן - צריך לקנפס אותן בחזרה לרזולוציה האמיתית לפני כל שימוש
+    // (תצוגה, אישור, ביצוע בפועל), כדי שהקליק יפגע במקום הנכון על המסך.
+    next.action = scaleActionToRealScreen(
+      next.action,
+      screenshot.width / screenshot.visionWidth,
+      screenshot.height / screenshot.visionHeight,
+    );
 
     params.onUpdate({
       type: "action",
