@@ -15,6 +15,7 @@ import { runComputerUseTask, type TaskUpdateEvent } from "./task-runner";
 import type { ComputerActionRequest } from "./ai/grok";
 import { saveRun, listRuns, getRun, findIncompleteRun } from "./run-history";
 import { getLearnedScreens, recordScreen } from "./screen-memory";
+import { isRetryableLoadFailure, nextReloadDelay } from "./window-reload";
 
 /**
  * ברירת המחדל היא האתר החי ב-Vercel. אפשר לדרוס בזמן פיתוח מקומי:
@@ -90,6 +91,23 @@ function createWindow(): BrowserWindow {
       event.preventDefault();
       void shell.openExternal(url);
     }
+  });
+
+  // טעינה ראשונית יכולה להיכשל בזמן שהמחשב עוד מתחבר לרשת (למשל מיד אחרי
+  // הפעלה/יקיצה) - זה מציג ברירת מחדל את דף השגיאה הגנרי של Chromium
+  // ("This page couldn't load") שדורש לחיצת Reload ידנית. במקום זה, מנסים
+  // שוב אוטומטית עם השהיה גדלה (ר' window-reload.ts), עד שהטעינה מצליחה.
+  let reloadAttempt = 0;
+  win.webContents.on("did-finish-load", () => {
+    reloadAttempt = 0;
+  });
+  win.webContents.on("did-fail-load", (_event, errorCode, _errorDescription, _validatedURL, isMainFrame) => {
+    if (!isRetryableLoadFailure(errorCode, isMainFrame) || win.isDestroyed()) return;
+    const delay = nextReloadDelay(reloadAttempt);
+    reloadAttempt += 1;
+    setTimeout(() => {
+      if (!win.isDestroyed()) void win.loadURL(WEB_URL);
+    }, delay);
   });
 
   void win.loadURL(WEB_URL);
