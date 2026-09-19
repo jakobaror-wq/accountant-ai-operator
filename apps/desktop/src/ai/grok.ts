@@ -68,6 +68,15 @@ const SYSTEM_PROMPT = `אתה פועל כרואה חשבון/מנהל חשבונ
 תמיד תעדיף לבדוק את התוצאה של הפעולה הקודמת לפני שתמשיך - אם משהו לא כמצופה, אל תמשיך "עיוור", תסביר את זה ב-reasoning ותנסה גישה אחרת.
 אם המשימה נכשלת, נתקעת, או שאי אפשר להשלים אותה (למשל אחרי כמה ניסיונות, או תשובה מהמשתמש ששוללת המשך) - החזר "done" עם summary **שמסביר בפירוט במה נכשלת ולמה** (מה ניסית, מה קרה, מה חסם אותך). לעולם אל תמציא הצלחה שלא הייתה.`;
 
+/**
+ * מגבלה על כמה צעדי היסטוריה נשלחים במלואם בכל קריאה ל-AI. בלי זה, במשימה
+ * ארוכה (מתקרבת ל-MAX_STEPS) כל השלבים הקודמים נשלחים מחדש בכל צעד - גדילה
+ * ליניארית שמייקרת ומאטה כל קריאה. השלבים הראשונים עדיין נשמרים במלואם
+ * ביומן הביקורת (run-history) - זו רק חיתוך של מה שנשלח ל-AI עצמו, לא של
+ * מה שנשמר למשתמש.
+ */
+const MAX_HISTORY_ENTRIES_IN_PROMPT = 20;
+
 function buildUserPrompt(params: {
   task: string;
   screenWidth: number;
@@ -76,12 +85,15 @@ function buildUserPrompt(params: {
   knownScreens: string[];
   hasSavedCredentials: boolean;
 }): string {
+  const recentHistory = params.history.slice(-MAX_HISTORY_ENTRIES_IN_PROMPT);
+  const truncatedCount = params.history.length - recentHistory.length;
   const historyText =
-    params.history.length === 0
+    recentHistory.length === 0
       ? "(זו הפעולה הראשונה)"
-      : params.history
-          .map((h, i) => `${i + 1}. ${h.reasoning} -> ${JSON.stringify(h.action)}`)
-          .join("\n");
+      : (truncatedCount > 0
+          ? `(${truncatedCount} צעדים קודמים נוספים בוצעו ולא מוצגים כאן במלואם - הפירוט המלא שמור ביומן הביקורת)\n`
+          : "") +
+        recentHistory.map((h, i) => `${truncatedCount + i + 1}. ${h.reasoning} -> ${JSON.stringify(h.action)}`).join("\n");
 
   const knownScreensText =
     params.knownScreens.length === 0 ? "(אין עדיין מסכים מוכרים בתוכנה הזו)" : params.knownScreens.join(", ");
