@@ -2,7 +2,15 @@ import { app, BrowserWindow, ipcMain, dialog, shell } from "electron";
 import { autoUpdater } from "electron-updater";
 import path from "node:path";
 import fs from "node:fs";
-import { getXaiApiKey, hasXaiApiKey, setXaiApiKey, clearXaiApiKey } from "./settings";
+import {
+  getXaiApiKey,
+  hasXaiApiKey,
+  setXaiApiKey,
+  clearXaiApiKey,
+  hasConnectorCredentials,
+  setConnectorCredentials,
+  clearConnectorCredentials,
+} from "./settings";
 import { runComputerUseTask, type TaskUpdateEvent } from "./task-runner";
 import type { ComputerActionRequest } from "./ai/grok";
 import { saveRun, listRuns, getRun, findIncompleteRun } from "./run-history";
@@ -150,6 +158,20 @@ app.whenReady().then(() => {
   ipcMain.handle("aiop:save-xai-key", (_event, key: string) => setXaiApiKey(key));
 
   ipcMain.handle("aiop:clear-xai-key", () => clearXaiApiKey());
+
+  ipcMain.handle("aiop:get-connector-credentials-status", (_event, connectorId: string) =>
+    hasConnectorCredentials(connectorId),
+  );
+
+  ipcMain.handle(
+    "aiop:save-connector-credentials",
+    (_event, connectorId: string, username: string, password: string) =>
+      setConnectorCredentials(connectorId, username, password),
+  );
+
+  ipcMain.handle("aiop:clear-connector-credentials", (_event, connectorId: string) =>
+    clearConnectorCredentials(connectorId),
+  );
 
   ipcMain.handle(
     "aiop:run-task",

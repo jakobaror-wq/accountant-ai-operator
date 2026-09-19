@@ -9,6 +9,7 @@ export type ComputerActionRequest =
   | { type: "click"; x: number; y: number; button?: "left" | "right" }
   | { type: "double_click"; x: number; y: number }
   | { type: "type"; text: string }
+  | { type: "type_credential"; field: "username" | "password" }
   | { type: "key"; key: string }
   | { type: "scroll"; amount: number }
   | { type: "wait"; ms: number }
@@ -112,6 +113,13 @@ const electronAPI = {
   getXaiKeyStatus: (): Promise<boolean> => ipcRenderer.invoke("aiop:get-xai-key-status"),
   saveXaiKey: (key: string): Promise<boolean> => ipcRenderer.invoke("aiop:save-xai-key", key),
   clearXaiKey: (): Promise<boolean> => ipcRenderer.invoke("aiop:clear-xai-key"),
+
+  getConnectorCredentialsStatus: (connectorId: string): Promise<boolean> =>
+    ipcRenderer.invoke("aiop:get-connector-credentials-status", connectorId),
+  saveConnectorCredentials: (connectorId: string, username: string, password: string): Promise<boolean> =>
+    ipcRenderer.invoke("aiop:save-connector-credentials", connectorId, username, password),
+  clearConnectorCredentials: (connectorId: string): Promise<boolean> =>
+    ipcRenderer.invoke("aiop:clear-connector-credentials", connectorId),
 
   runTask: (task: string, connectorId: string, resumeRunId?: string): Promise<RunTaskResult> =>
     ipcRenderer.invoke("aiop:run-task", task, connectorId, resumeRunId),

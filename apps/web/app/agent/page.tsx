@@ -40,6 +40,8 @@ function describeAction(action: { type: string } & Record<string, unknown>): str
       return `קליק כפול בנקודה (${action.x}, ${action.y})`;
     case "type":
       return `הקלדת הטקסט: "${action.text}"`;
+    case "type_credential":
+      return `הזנת ${action.field === "username" ? "שם משתמש" : "סיסמה"} שמור/ה`;
     case "key":
       return `לחיצה על המקש: ${action.key}`;
     case "scroll":
@@ -70,6 +72,11 @@ export default function AgentPage() {
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [queueHalted, setQueueHalted] = useState(false);
   const [appVersion, setAppVersion] = useState<string | null>(null);
+  const [hasConnectorCredentials, setHasConnectorCredentials] = useState(false);
+  const [credUsername, setCredUsername] = useState("");
+  const [credPassword, setCredPassword] = useState("");
+  const [savingCreds, setSavingCreds] = useState(false);
+  const [credsEditing, setCredsEditing] = useState(false);
   const logEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -186,6 +193,15 @@ export default function AgentPage() {
   }, [connectorId, historyRefresh]);
 
   useEffect(() => {
+    if (!window.electronAPI || !connectorId) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- מאפס שדות טופס בעריכה כשעוברים תוכנה, לא סנכרון תצוגה חיצוני
+    setCredsEditing(false);
+    setCredUsername("");
+    setCredPassword("");
+    window.electronAPI.getConnectorCredentialsStatus(connectorId).then(setHasConnectorCredentials);
+  }, [connectorId]);
+
+  useEffect(() => {
     if (!window.electronAPI || !connectorId || running) return;
     window.electronAPI.getIncompleteRun(connectorId).then(setIncompleteRun);
   }, [connectorId, running, historyRefresh]);
@@ -210,6 +226,30 @@ export default function AgentPage() {
     if (!window.electronAPI) return;
     await window.electronAPI.clearXaiKey();
     setHasKey(false);
+  }
+
+  async function handleSaveCredentials() {
+    if (!window.electronAPI || !connectorId || !credUsername.trim() || !credPassword) return;
+    setSavingCreds(true);
+    const success = await window.electronAPI.saveConnectorCredentials(
+      connectorId,
+      credUsername.trim(),
+      credPassword,
+    );
+    if (success) {
+      setHasConnectorCredentials(true);
+      setCredsEditing(false);
+      setCredUsername("");
+      setCredPassword("");
+    }
+    setSavingCreds(false);
+  }
+
+  async function handleClearCredentials() {
+    if (!window.electronAPI || !connectorId) return;
+    await window.electronAPI.clearConnectorCredentials(connectorId);
+    setHasConnectorCredentials(false);
+    setCredsEditing(false);
   }
 
   async function handleStart() {
@@ -403,6 +443,70 @@ export default function AgentPage() {
               <span className="text-xs text-slate-400">
                 {learnedScreenCount} מסכים מוכרים בתוכנה הזו מריצות קודמות
               </span>
+            )}
+          </div>
+
+          <div className="rounded-xl border border-slate-200 bg-white p-4">
+            <div className="flex items-center justify-between gap-2">
+              <h2 className="text-sm font-semibold text-slate-800">פרטי התחברות לתוכנה זו</h2>
+              {hasConnectorCredentials && !credsEditing && (
+                <span className="text-xs font-medium text-emerald-700">שמורים - ה-AI יכול להתחבר לבד</span>
+              )}
+            </div>
+            <p className="mt-1 text-xs text-slate-500">
+              נשמר מוצפן על המחשב הזה בלבד (כמו מפתח ה-API), לא נשלח לענן ולא נשמר ביומן הביקורת - אם
+              התוכנה מציגה מסך התחברות, ה-AI יזין את הפרטים לבד בלי לעצור לשאלה.
+            </p>
+
+            {credsEditing ? (
+              <div className="mt-3 flex flex-col gap-2">
+                <input
+                  type="text"
+                  value={credUsername}
+                  onChange={(e) => setCredUsername(e.target.value)}
+                  placeholder="שם משתמש"
+                  className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                />
+                <input
+                  type="password"
+                  value={credPassword}
+                  onChange={(e) => setCredPassword(e.target.value)}
+                  placeholder="סיסמה"
+                  className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                />
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={handleSaveCredentials}
+                    disabled={savingCreds || !credUsername.trim() || !credPassword}
+                    className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+                  >
+                    שמור
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCredsEditing(false)}
+                    className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                  >
+                    ביטול
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="mt-3 flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setCredsEditing(true)}
+                  className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  {hasConnectorCredentials ? "עדכן פרטי התחברות" : "שמור פרטי התחברות"}
+                </button>
+                {hasConnectorCredentials && (
+                  <button type="button" onClick={handleClearCredentials} className="text-sm text-red-600 underline">
+                    מחק
+                  </button>
+                )}
+              </div>
             )}
           </div>
 

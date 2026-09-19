@@ -9,6 +9,7 @@ type ComputerActionRequest =
   | { type: "click"; x: number; y: number; button?: "left" | "right" }
   | { type: "double_click"; x: number; y: number }
   | { type: "type"; text: string }
+  | { type: "type_credential"; field: "username" | "password" }
   | { type: "key"; key: string }
   | { type: "scroll"; amount: number }
   | { type: "wait"; ms: number }
@@ -106,6 +107,10 @@ interface ElectronAPI {
   getXaiKeyStatus(): Promise<boolean>;
   saveXaiKey(key: string): Promise<boolean>;
   clearXaiKey(): Promise<boolean>;
+
+  getConnectorCredentialsStatus(connectorId: string): Promise<boolean>;
+  saveConnectorCredentials(connectorId: string, username: string, password: string): Promise<boolean>;
+  clearConnectorCredentials(connectorId: string): Promise<boolean>;
 
   runTask(task: string, connectorId: string, resumeRunId?: string): Promise<RunTaskResult>;
   stopTask(): Promise<boolean>;

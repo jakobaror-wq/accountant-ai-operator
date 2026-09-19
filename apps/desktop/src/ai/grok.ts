@@ -15,6 +15,7 @@ export type ComputerActionRequest =
   | { type: "click"; x: number; y: number; button?: "left" | "right" }
   | { type: "double_click"; x: number; y: number }
   | { type: "type"; text: string }
+  | { type: "type_credential"; field: "username" | "password" }
   | { type: "key"; key: string }
   | { type: "scroll"; amount: number }
   | { type: "wait"; ms: number }
@@ -45,11 +46,14 @@ const SYSTEM_PROMPT = `אתה פועל כרואה חשבון/מנהל חשבונ
 {"type":"click","x":<number>,"y":<number>,"button":"left"|"right"}
 {"type":"double_click","x":<number>,"y":<number>}
 {"type":"type","text":"<string>"}
+{"type":"type_credential","field":"username"|"password"}  // הזנת שם משתמש/סיסמה שמורים - ר' הסבר ייעודי למטה, לעולם לא עם "type"
 {"type":"key","key":"enter"|"tab"|"escape"|"backspace"|"delete"|"up"|"down"|"left"|"right"|"space"}
 {"type":"scroll","amount":<number>}  // חיובי = למטה, שלילי = למעלה
 {"type":"wait","ms":<number>}
 {"type":"ask","question":"<string>"}  // שאלה ממוקדת למשתמש - ר' כלל הביטחון למטה
 {"type":"done","summary":"<string>"}  // רק כשהמשימה הושלמה במלואה, או כשאי אפשר להמשיך - ר' סוף ההוראות
+
+**type_credential - כניסה לתוכנה:** אם אתה נתקל במסך התחברות (שדות שם משתמש/סיסמה) של התוכנה, **לעולם אל תמציא או תנחש ערכים ואל תשתמש ב-"type" עבור שדות כאלה**. השתמש ב-"type_credential" עם ה-field המתאים - הערך האמיתי נשלף באופן מקומי ובטוח בזמן הביצוע, ואתה לא רואה ולא צריך לדעת אותו. תראה בפרומפט אם יש פרטי התחברות שמורים לתוכנה הנוכחית. אם אין - אל תנסה "type_credential", השתמש ב-"ask" כדי להסביר למשתמש שצריך לשמור פרטי התחברות במסך ה-AI Agent קודם.
 
 **confidence - כלל מחייב:** דרג בין 0 ל-1 עד כמה אתה בטוח שזיהית נכון את המסך ושהפעולה שבחרת היא הנכונה. אם הביטחון שלך נמוך מ-0.95 - **אל תנחש ואל תפעל**. השתמש ב-action מסוג "ask" ושאל שאלה ממוקדת וברורה שתעזור לך להמשיך בבטחה (למשל: "אני רואה שני לקוחות בשם דומה - X בע\"מ ו-X אחזקות - לאיזה מהם מתכוון?"). רואה חשבון מקצועי לא מנחש נתונים - הוא שואל. עדיף לשאול יותר מדי מאשר לטעות בנתון פיננסי.
 
@@ -57,7 +61,7 @@ const SYSTEM_PROMPT = `אתה פועל כרואה חשבון/מנהל חשבונ
 - **false (חופשי, בלי אישור)**: שאיבת/קריאת מידע - ניווט, פתיחת מסכים/דוחות לצפייה, חיפוש, סינון, גלילה, בחירת שורה לצפייה בלבד. **וגם** יצירת/ייצוא קבצים - ייצוא לדוח/PDF/Excel, הדפסה לקובץ - כל עוד זה לא משנה נתון קיים בתוכנה עצמה.
 - **true (חובה אישור אנושי לפני ביצוע)**: כל פעולה שמשנה מידע בתוך התוכנה עצמה - שמירה, עריכת שדה ואישורה, מחיקה, הוספת/עריכת רשומה, רישום פקודת יומן, אישור/פרסום מסמך, תשלום, לחיצה על "כן"/"אישור"/"מחק" בדיאלוג ששומר שינוי.
 - אם לא ברור לאיזו קטגוריה הפעולה שייכת - שים true (ברירת המחדל הבטוחה).
-- "ask" ו-"done" הם תמיד false - אלה לא פעולות על המסך.
+- "ask", "done" ו-"type_credential" הם תמיד false - התחברות לתוכנה לא משנה נתון פיננסי בתוכה, היא רק פותחת גישה.
 
 כשה-requiresApproval הוא true, הפעולה תוצג למשתמש לאישור מפורש ולא תבוצע לפני שהוא מאשר; פעולות עם false מתבצעות מיד, כדי לא להטריד את המשתמש בכל צעד ניווט/קריאה.
 
@@ -70,6 +74,7 @@ function buildUserPrompt(params: {
   screenHeight: number;
   history: HistoryEntry[];
   knownScreens: string[];
+  hasSavedCredentials: boolean;
 }): string {
   const historyText =
     params.history.length === 0
@@ -81,7 +86,11 @@ function buildUserPrompt(params: {
   const knownScreensText =
     params.knownScreens.length === 0 ? "(אין עדיין מסכים מוכרים בתוכנה הזו)" : params.knownScreens.join(", ");
 
-  return `משימה: ${params.task}\nגודל מסך: ${params.screenWidth}x${params.screenHeight}\n\nמסכים מוכרים בתוכנה הזו: ${knownScreensText}\n\nהיסטוריית פעולות:\n${historyText}\n\nמה הפעולה הבאה?`;
+  const credentialsText = params.hasSavedCredentials
+    ? "יש פרטי התחברות שמורים לתוכנה הזו - מותר להשתמש ב-type_credential במסך התחברות."
+    : "אין פרטי התחברות שמורים לתוכנה הזו - אם תיתקל במסך התחברות, אל תשתמש ב-type_credential, שאל את המשתמש.";
+
+  return `משימה: ${params.task}\nגודל מסך: ${params.screenWidth}x${params.screenHeight}\n\nמסכים מוכרים בתוכנה הזו: ${knownScreensText}\n\n${credentialsText}\n\nהיסטוריית פעולות:\n${historyText}\n\nמה הפעולה הבאה?`;
 }
 
 function extractJson(content: string): unknown {
@@ -102,6 +111,7 @@ export async function requestNextAction(params: {
   screenHeight: number;
   history: HistoryEntry[];
   knownScreens: string[];
+  hasSavedCredentials: boolean;
   model?: string;
 }): Promise<GrokStepResult> {
   // net.fetch (לא ה-fetch הגלובלי של Node) - רץ על מנוע הרשת של Chromium,
@@ -155,11 +165,12 @@ export async function requestNextAction(params: {
       : 0;
   const screenLabel =
     typeof parsed.screenLabel === "string" && parsed.screenLabel.trim() ? parsed.screenLabel.trim() : "לא מזוהה";
-  // ברירת מחדל בטוחה נוספת: "ask"/"done" לעולם לא דורשים אישור (הם לא פעולות
-  // על המסך); לכל פעולה אחרת, אם המודל לא ציין requiresApproval תקין - מניחים
-  // שכן נדרש אישור (עדיף לעצור לחינם מאשר לשנות נתון בלי אישור אדם).
+  // ברירת מחדל בטוחה נוספת: "ask"/"done"/"type_credential" לעולם לא דורשים
+  // אישור (אלה לא פעולות שמשנות נתון בתוכנה); לכל פעולה אחרת, אם המודל לא
+  // ציין requiresApproval תקין - מניחים שכן נדרש אישור (עדיף לעצור לחינם
+  // מאשר לשנות נתון בלי אישור אדם).
   const requiresApproval =
-    parsed.action.type === "ask" || parsed.action.type === "done"
+    parsed.action.type === "ask" || parsed.action.type === "done" || parsed.action.type === "type_credential"
       ? false
       : typeof parsed.requiresApproval === "boolean"
         ? parsed.requiresApproval

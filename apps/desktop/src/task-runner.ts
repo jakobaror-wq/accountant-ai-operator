@@ -1,5 +1,6 @@
 import { captureScreenshot, executeAction } from "./computer-use";
 import { requestNextAction, CONFIDENCE_THRESHOLD, type HistoryEntry } from "./ai/grok";
+import { getConnectorCredentials } from "./settings";
 
 export interface RunStepRecord {
   step: number;
@@ -151,6 +152,7 @@ export async function runComputerUseTask(params: {
         screenHeight: screenshot.visionHeight,
         history,
         knownScreens: params.knownScreens,
+        hasSavedCredentials: Boolean(getConnectorCredentials(params.connectorId)),
       });
     } catch (err) {
       const message = `ai-request-failed: ${describeError(err)}`;
@@ -266,8 +268,36 @@ export async function runComputerUseTask(params: {
       }
     }
 
+    // "type_credential" הוא פעולה סמלית - הערך האמיתי (סיסמה/שם משתמש) לעולם
+    // לא עובר דרך המודל ולא נכתב ליומן הריצות; הוא נשלף כאן, רגע לפני ביצוע
+    // בפועל, ורק ה-action הסמלי (next.action) נשמר ב-steps/history.
+    let actionToExecute = next.action;
+    if (actionToExecute.type === "type_credential") {
+      const creds = getConnectorCredentials(params.connectorId);
+      const value = creds ? (actionToExecute.field === "username" ? creds.username : creds.password) : undefined;
+      if (!value) {
+        const fieldLabel = actionToExecute.field === "username" ? "שם משתמש" : "סיסמה";
+        const message = `no-saved-credentials: לא נשמרו פרטי התחברות (${fieldLabel}) עבור התוכנה הזו. אפשר לשמור אותם במסך ה-AI Agent ולנסות שוב.`;
+        steps.push({
+          step,
+          timestamp: new Date().toISOString(),
+          reasoning: next.reasoning,
+          screenLabel: next.screenLabel,
+          confidence: next.confidence,
+          action: actionToExecute,
+          requiresApproval: false,
+          outcome: "failed",
+          error: message,
+        });
+        params.onUpdate({ type: "error", step, message });
+        finish("error", message);
+        return;
+      }
+      actionToExecute = { type: "type", text: value };
+    }
+
     try {
-      await executeAction(next.action);
+      await executeAction(actionToExecute);
     } catch (err) {
       const message = `action-failed: ${describeError(err)}`;
       steps.push({
