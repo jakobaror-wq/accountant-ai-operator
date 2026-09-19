@@ -50,10 +50,13 @@ function approvalSummary(run: RunSummary): string {
   return `${approvalSteps.length} פעולות דרשו אישור - ${approved} אושרו${rejected > 0 ? `, ${rejected} נדחו` : ""}`;
 }
 
+const PAGE_SIZE = 20;
+
 export default function AuditPage() {
   const [isElectron, setIsElectron] = useState(false);
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [connectorFilter, setConnectorFilter] = useState<string>("all");
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
 
   useEffect(() => {
     if (typeof window === "undefined" || !window.electronAPI) return;
@@ -66,6 +69,13 @@ export default function AuditPage() {
     () => (connectorFilter === "all" ? runs : runs.filter((r) => r.connectorId === connectorFilter)),
     [runs, connectorFilter],
   );
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- מאפס עימוד כשהמסנן משתנה, לא סנכרון תצוגה חיצוני
+    setVisibleCount(PAGE_SIZE);
+  }, [connectorFilter]);
+
+  const visibleRuns = filteredRuns.slice(0, visibleCount);
 
   if (!isElectron) {
     return (
@@ -115,7 +125,7 @@ export default function AuditPage() {
 
       <div className="mt-4 flex flex-col gap-3">
         {filteredRuns.length === 0 && <p className="text-sm text-slate-400">אין עדיין ריצות שמורות.</p>}
-        {filteredRuns.map((run) => (
+        {visibleRuns.map((run) => (
           <details key={run.id} className="rounded-lg border border-slate-200 bg-white p-4 text-sm">
             <summary className="flex cursor-pointer items-center justify-between gap-2">
               <span className="flex flex-col">
@@ -152,6 +162,15 @@ export default function AuditPage() {
             </button>
           </details>
         ))}
+        {visibleCount < filteredRuns.length && (
+          <button
+            type="button"
+            onClick={() => setVisibleCount((n) => n + PAGE_SIZE)}
+            className="self-center rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-600 hover:border-slate-300"
+          >
+            טען עוד ({visibleRuns.length} מתוך {filteredRuns.length})
+          </button>
+        )}
       </div>
     </main>
   );
