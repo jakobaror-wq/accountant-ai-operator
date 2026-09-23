@@ -5,6 +5,9 @@ import type { ConnectorDefinition } from "@/lib/connectors";
 
 interface Props {
   connector: ConnectorDefinition;
+  /** נתיב שמור שכבר נשלף פעם אחת עבור כל התוכנות יחד (ר' IntegrationsGrid) -
+   * לא נשלף כאן שוב per-card, כדי לא לכפול קריאות IPC/קריאות דיסק מיותרות. */
+  path: string | null;
 }
 
 const DROP_ERROR_MESSAGES: Record<string, string> = {
@@ -12,23 +15,27 @@ const DROP_ERROR_MESSAGES: Record<string, string> = {
   "target-not-found": "הקובץ שאליו הקיצור מצביע לא נמצא.",
 };
 
-export function ConnectorCard({ connector }: Props) {
+export function ConnectorCard({ connector, path }: Props) {
   const [isElectron, setIsElectron] = useState(false);
-  const [chosenPath, setChosenPath] = useState<string | null>(null);
+  const [chosenPath, setChosenPath] = useState<string | null>(path);
   const [launchError, setLaunchError] = useState<string | null>(null);
   const [dropError, setDropError] = useState<string | null>(null);
   const [isDraggingOver, setIsDraggingOver] = useState(false);
 
   useEffect(() => {
     // window.electronAPI קיים רק בתוך אפליקציית ה-Desktop (preload), לעולם לא ב-SSR/דפדפן רגיל.
-    // זיהוי חד-פעמי + שליפת נתיב שמור דרך IPC אסינכרוני, לא state שאפשר לגזור בזמן ה-render.
     if (typeof window === "undefined" || !window.electronAPI) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setIsElectron(true);
-    window.electronAPI.getConnectorPaths().then((paths) => {
-      setChosenPath(paths[connector.id] ?? null);
-    });
-  }, [connector.id]);
+  }, []);
+
+  useEffect(() => {
+    // path מגיע מ-IPC אסינכרוני ב-IntegrationsGrid ומתעדכן מ-null לערך האמיתי
+    // אחרי ה-mount הראשוני - צריך לסנכרן את זה ל-state המקומי (שגם מתעדכן
+    // עצמאית אחר כך ע"י pickExecutable/resolveDroppedPath).
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setChosenPath(path);
+  }, [path]);
 
   async function handlePickExecutable() {
     if (!window.electronAPI) return;

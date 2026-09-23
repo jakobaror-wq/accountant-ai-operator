@@ -1,5 +1,4 @@
-import { CONNECTORS } from "@/lib/connectors";
-import { ConnectorCard } from "@/components/ConnectorCard";
+import { IntegrationsGrid } from "@/components/IntegrationsGrid";
 import { InstallAppBanner } from "@/components/InstallAppBanner";
 
 export const metadata = {
@@ -18,11 +17,7 @@ export default function IntegrationsPage() {
         </p>
       </header>
 
-      <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
-        {CONNECTORS.map((connector) => (
-          <ConnectorCard key={connector.id} connector={connector} />
-        ))}
-      </div>
+      <IntegrationsGrid />
     </main>
   );
 }
