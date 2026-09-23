@@ -70,6 +70,7 @@ type TaskUpdateEvent =
       reasoning: string;
       confidence: number;
       action: ComputerActionRequest;
+      source: "ai" | "macro";
     }
   | { type: "awaiting-answer"; step: number; question: string }
   | { type: "rejected"; step: number }
@@ -94,7 +95,13 @@ interface AgentStatus {
   running: boolean;
   connectorId: string | null;
   task: string | null;
-  pendingApproval: { step: number; reasoning: string; confidence: number; action: ComputerActionRequest } | null;
+  pendingApproval: {
+    step: number;
+    reasoning: string;
+    confidence: number;
+    action: ComputerActionRequest;
+    source: "ai" | "macro";
+  } | null;
   pendingQuestion: { step: number; question: string } | null;
 }
 

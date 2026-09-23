@@ -54,6 +54,11 @@ export type TaskUpdateEvent =
       reasoning: string;
       confidence: number;
       action: HistoryEntry["action"];
+      /** ר' ההערה על "action" למעלה - חשוב במיוחד כאן: זה בדיוק הרגע שבו
+       * המשתמש מתבקש לאשר פעולה שמשנה נתון, אז חשוב שיידע אם ההחלטה
+       * הגיעה משידור-חוזר (עם confidence=1 מלאכותי, לא ציון אמון אמיתי -
+       * ר' waitForApproval) ולא מ-AI חי שבדק את המסך הנוכחי. */
+      source: "ai" | "macro";
     }
   | { type: "awaiting-answer"; step: number; question: string }
   | { type: "rejected"; step: number }
@@ -151,6 +156,7 @@ export async function runComputerUseTask(params: {
     reasoning: string,
     confidence: number,
     action: HistoryEntry["action"],
+    source: "ai" | "macro",
   ) => Promise<boolean>;
   waitForAnswer: (step: number, question: string) => Promise<string>;
   /** ממשיכים ריצה שהופסקה (קריסה/סגירה) במקום להתחיל מאפס ולסכן פעולה כפולה. */
@@ -171,8 +177,13 @@ export async function runComputerUseTask(params: {
   let macroActive = Boolean(macro);
   let macroCursor = 0;
   let resolutionChecked = false;
-  let anyStepUsedAi = false;
   const executedMacroSteps: MacroStep[] = [];
+  // גם מכבה שידור-חוזר (MACRO_REPLAY_ENABLED) אמור לכבות למידה לגמרי, לא רק
+  // replay - אחרת מתג-הכיבוי המתועד כ"כיבוי מלא של התכונה" (ר' macros.ts)
+  // ימשיך לכתוב macros.json חדשים בשקט ברקע בזמן שהוא "כבוי". resumeFrom
+  // כבר גורם ל-macro=null למעלה, אבל learningEligible גם חוסך את חישוב
+  // התמונונת המיותר על ריצת-המשך שממילא לעולם לא תישמר כמאקרו.
+  const learningEligible = !params.resumeFrom && MACRO_REPLAY_ENABLED;
 
   function finish(status: RunRecord["status"], summary?: string): void {
     params.onUpdate({
@@ -212,10 +223,12 @@ export async function runComputerUseTask(params: {
     }
     params.onUpdate({ type: "screenshot", step, base64Png: screenshot.base64Png });
 
-    // תמונונת-השוואה נגזרת פעם אחת לכל צעד, בין אם יש מאקרו פעיל (משמשת
-    // מייד להשוואת-דמיון) ובין אם לא (נשמרת ל-executedMacroSteps, למקרה
-    // שהריצה הזו תזכה להפוך בעצמה למאקרו בסיום, ר' "done" למטה).
-    const stepThumbnail = deriveComparisonThumbnail(screenshot.base64Png);
+    // תמונונת-השוואה נגזרת פעם אחת לכל צעד, רק כשבאמת יכולה לשמש למשהו: אם
+    // יש מאקרו פעיל (להשוואת-דמיון מיידית) או אם הריצה הזו בכלל זכאית ללמידה
+    // (נשמרת ל-executedMacroSteps, למקרה שהריצה תהפוך בעצמה למאקרו בסיום,
+    // ר' "done" למטה) - resumeFrom/MACRO_REPLAY_ENABLED=false לא זכאים
+    // לאף אחד מהם, אז אין טעם לבזבז את עלות החישוב.
+    const stepThumbnail = macroActive || learningEligible ? deriveComparisonThumbnail(screenshot.base64Png) : null;
 
     if (macro && !resolutionChecked) {
       // בדיקה חד-פעמית (לא לפי macroCursor - הוא לא מתקדם אם ההתאמה נכשלת
@@ -235,7 +248,7 @@ export async function runComputerUseTask(params: {
     let next: GrokStepResult | undefined;
     let usedMacro = false;
 
-    if (macroActive && macro && macroCursor < macro.steps.length) {
+    if (macroActive && macro && stepThumbnail && macroCursor < macro.steps.length) {
       const macroStep = macro.steps[macroCursor];
       if (bitmapDiffScore(stepThumbnail, macroStep.referenceThumbnail) <= MACRO_MATCH_THRESHOLD) {
         next = {
@@ -257,7 +270,6 @@ export async function runComputerUseTask(params: {
     }
 
     if (!next) {
-      anyStepUsedAi = true;
       try {
         next = await requestNextActionWithRetry({
           apiKey: params.apiKey,
@@ -310,11 +322,13 @@ export async function runComputerUseTask(params: {
       });
       // לומדים מאקרו רק מריצה טרייה (לא resumeFrom - ר' הערה למעלה) שהסתיימה
       // ב-done אמיתי, בלי אף צעד "ask" (לא דטרמיניסטי מספיק כדי לשדר חוזר -
-      // ר' macros.ts), ועם לפחות פעולה אחת בפועל. אם המאקרו הקיים כבר כיסה
-      // 100% מהריצה בלי אף נפילה ל-AI - אין מה ללמוד מחדש, שומרים על אותו קובץ.
+      // ר' macros.ts), ועם לפחות פעולה אחת בפועל. תמיד שומרים מחדש (לא רק
+      // כשיש שינוי) - זה זול (JSON מקומי), ומבטיח שהרצף העדכני ביותר שהצליח
+      // הוא זה שיהיה זמין לשידור-חוזר בפעם הבאה; saveMacro עצמו שומר על
+      // הטלמטריה (timesReplayed/timesFellBackToAi/createdAt) של מאקרו קיים
+      // באותו מפתח, לא מאפס אותה (ר' macros.ts).
       const hasAskStep = steps.some((s) => s.outcome === "asked");
-      const fullyReplayedExisting = Boolean(macro) && !anyStepUsedAi;
-      if (!params.resumeFrom && !hasAskStep && !fullyReplayedExisting && executedMacroSteps.length > 0) {
+      if (!params.resumeFrom && !hasAskStep && executedMacroSteps.length > 0) {
         saveMacro(
           params.connectorId,
           params.task,
@@ -357,14 +371,16 @@ export async function runComputerUseTask(params: {
     // רק פעולות שמשנות נתון בתוך התוכנה דורשות אישור אנושי מפורש - שאיבת מידע,
     // ניווט וייצוא קבצים זורמים חופשי (ר' דרישה מפורשת + criteria ב-grok.ts).
     if (next.requiresApproval) {
+      const approvalSource = usedMacro ? "macro" : "ai";
       params.onUpdate({
         type: "awaiting-approval",
         step,
         reasoning: next.reasoning,
         confidence: next.confidence,
         action: next.action,
+        source: approvalSource,
       });
-      const approved = await params.waitForApproval(step, next.reasoning, next.confidence, next.action);
+      const approved = await params.waitForApproval(step, next.reasoning, next.confidence, next.action, approvalSource);
 
       if (params.shouldStop()) {
         steps.push({
@@ -463,15 +479,19 @@ export async function runComputerUseTask(params: {
     });
     checkpoint();
 
-    // נאסף בכל צעד שהצליח (גם כשלא היה מאקרו פעיל) - אם הריצה הזו עצמה
-    // תסתיים ב-done תקין, זה מה ש-saveMacro ישמור כמאקרו חדש/מעודכן.
-    executedMacroSteps.push({
-      screenLabel: next.screenLabel,
-      referenceThumbnail: stepThumbnail,
-      reasoning: next.reasoning,
-      action: next.action,
-      requiresApproval: next.requiresApproval,
-    });
+    // נאסף בכל צעד שהצליח כשהריצה זכאית ללמידה (גם כשלא היה מאקרו פעיל עדיין
+    // באותה ריצה) - אם היא עצמה תסתיים ב-done תקין, זה מה ש-saveMacro ישמור
+    // כמאקרו חדש/מעודכן. stepThumbnail מובטח מוגדר כאן: learningEligible
+    // הוא בדיוק התנאי שגם קבע את חישובו למעלה.
+    if (learningEligible && stepThumbnail) {
+      executedMacroSteps.push({
+        screenLabel: next.screenLabel,
+        referenceThumbnail: stepThumbnail,
+        reasoning: next.reasoning,
+        action: next.action,
+        requiresApproval: next.requiresApproval,
+      });
+    }
 
     history.push({ reasoning: next.reasoning, action: next.action });
     await new Promise((resolve) => setTimeout(resolve, STEP_PAUSE_MS));

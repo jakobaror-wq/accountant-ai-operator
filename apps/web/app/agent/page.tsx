@@ -16,6 +16,7 @@ interface PendingApproval {
   reasoning: string;
   confidence: number;
   actionLabel: string;
+  source: "ai" | "macro";
 }
 
 interface PendingQuestion {
@@ -100,6 +101,7 @@ export default function AgentPage() {
           reasoning: status.pendingApproval.reasoning,
           confidence: status.pendingApproval.confidence,
           actionLabel: describeAction(status.pendingApproval.action),
+          source: status.pendingApproval.source,
         });
       }
       if (status.pendingQuestion) {
@@ -138,6 +140,7 @@ export default function AgentPage() {
             reasoning: event.reasoning,
             confidence: event.confidence,
             actionLabel: describeAction(event.action),
+            source: event.source,
           });
           break;
         case "awaiting-answer":
@@ -623,16 +626,29 @@ export default function AgentPage() {
             <div className="rounded-xl border border-amber-300 bg-amber-50 p-5">
               <div className="flex items-center justify-between gap-2">
                 <h2 className="font-semibold text-amber-900">נדרש אישור לפני ביצוע</h2>
-                <span
-                  className={`rounded-full px-2 py-0.5 text-xs font-medium ${
-                    pendingApproval.confidence < CONFIDENCE_WARNING_THRESHOLD
-                      ? "bg-red-100 text-red-700"
-                      : "bg-emerald-100 text-emerald-700"
-                  }`}
-                >
-                  ביטחון {Math.round(pendingApproval.confidence * 100)}%
-                  {pendingApproval.confidence < CONFIDENCE_WARNING_THRESHOLD && " - נמוך, בדוק היטב"}
-                </span>
+                {pendingApproval.source === "macro" ? (
+                  // צעד ששוחזר ממאקרו: אין כאן שיפוט-ביטחון אמיתי של AI שבדק
+                  // את המסך הנוכחי - ה-confidence הוא ערך מלאכותי קבוע (ר'
+                  // task-runner.ts), אז מציגים סימון "ממאקרו" מפורש במקום
+                  // תג "ביטחון 100%" שיווצר רושם מטעה של בדיקה חיה שלא קרתה.
+                  <span
+                    className="rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-medium text-indigo-700"
+                    title="הפעולה שוחזרה מריצה קודמת (מאקרו) בלי קריאה חיה ל-AI לצעד הזה - בדוק בזהירות, התכונה עדיין לא אומתה בפועל"
+                  >
+                    🔁 ממאקרו - לא נבדק חי כרגע
+                  </span>
+                ) : (
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                      pendingApproval.confidence < CONFIDENCE_WARNING_THRESHOLD
+                        ? "bg-red-100 text-red-700"
+                        : "bg-emerald-100 text-emerald-700"
+                    }`}
+                  >
+                    ביטחון {Math.round(pendingApproval.confidence * 100)}%
+                    {pendingApproval.confidence < CONFIDENCE_WARNING_THRESHOLD && " - נמוך, בדוק היטב"}
+                  </span>
+                )}
               </div>
               <p className="mt-1 text-sm text-amber-900">{pendingApproval.reasoning}</p>
               <p className="mt-2 text-sm font-medium text-amber-900">

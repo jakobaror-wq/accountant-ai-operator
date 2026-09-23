@@ -97,15 +97,24 @@ export function saveMacro(
 ): void {
   const key = normalizeTask(task);
   const macros = loadConnectorMacros(connectorId);
+  const existing = macros[key];
+  // מעדכנים/דורסים תמיד את הצעדים עצמם (הרצף העדכני ביותר שהצליח), אבל
+  // **שומרים** על טלמטריית השימוש (timesReplayed/timesFellBackToAi/
+  // createdAt) של מאקרו קיים באותו מפתח - בלי זה, כל ריצה מוצלחת שממשיכה
+  // אחרי מאקרו קיים הייתה מאפסת את המונים האלה בסוף הריצה, גם אם רוב
+  // הצעדים בה שוחזרו בהצלחה מהקאש ובדיוק עדכנו את אותם מונים רגע קודם לכן
+  // (ר' recordMacroReplay/recordMacroFallback למטה) - הטלמטריה הייתה
+  // חסרת משמעות בפועל.
   const macro: Macro = {
     connectorId,
     normalizedTask: key,
     recordedTask: task,
     recordedResolution,
     sourceRunId,
-    createdAt: new Date().toISOString(),
-    timesReplayed: 0,
-    timesFellBackToAi: 0,
+    createdAt: existing?.createdAt ?? new Date().toISOString(),
+    lastUsedAt: existing?.lastUsedAt,
+    timesReplayed: existing?.timesReplayed ?? 0,
+    timesFellBackToAi: existing?.timesFellBackToAi ?? 0,
     steps,
   };
   persist(connectorId, { ...macros, [key]: macro });

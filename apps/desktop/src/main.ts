@@ -132,6 +132,7 @@ let pendingApproval: {
   reasoning: string;
   confidence: number;
   action: ComputerActionRequest;
+  source: "ai" | "macro";
   resolve: (approved: boolean) => void;
 } | null = null;
 let pendingQuestion: { step: number; question: string; resolve: (answer: string) => void } | null = null;
@@ -150,7 +151,13 @@ interface AgentStatus {
   running: boolean;
   connectorId: string | null;
   task: string | null;
-  pendingApproval: { step: number; reasoning: string; confidence: number; action: ComputerActionRequest } | null;
+  pendingApproval: {
+    step: number;
+    reasoning: string;
+    confidence: number;
+    action: ComputerActionRequest;
+    source: "ai" | "macro";
+  } | null;
   pendingQuestion: { step: number; question: string } | null;
 }
 
@@ -169,6 +176,7 @@ function getAgentStatus(): AgentStatus {
           reasoning: pendingApproval.reasoning,
           confidence: pendingApproval.confidence,
           action: pendingApproval.action,
+          source: pendingApproval.source,
         }
       : null,
     pendingQuestion: pendingQuestion ? { step: pendingQuestion.step, question: pendingQuestion.question } : null,
@@ -228,9 +236,9 @@ app.whenReady().then(() => {
           if (update.type === "run-summary") saveRun(update.run);
           if (!sender.isDestroyed()) sender.send("aiop:task-update", update);
         },
-        waitForApproval: (step, reasoning, confidence, action) =>
+        waitForApproval: (step, reasoning, confidence, action, source) =>
           new Promise<boolean>((resolve) => {
-            pendingApproval = { step, reasoning, confidence, action, resolve };
+            pendingApproval = { step, reasoning, confidence, action, source, resolve };
           }),
         waitForAnswer: (step, question) =>
           new Promise<string>((resolve) => {
