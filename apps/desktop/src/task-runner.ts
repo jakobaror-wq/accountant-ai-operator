@@ -178,9 +178,9 @@ export async function runComputerUseTask(params: {
       next = await requestNextActionWithRetry({
         apiKey: params.apiKey,
         task: params.task,
-        screenshotBase64: screenshot.visionBase64Png,
-        screenWidth: screenshot.visionWidth,
-        screenHeight: screenshot.visionHeight,
+        screenshotBase64: screenshot.base64Png,
+        screenWidth: screenshot.width,
+        screenHeight: screenshot.height,
         history,
         knownScreens: params.knownScreens,
         hasSavedCredentials: Boolean(getConnectorCredentials(params.connectorId)),
@@ -198,8 +198,8 @@ export async function runComputerUseTask(params: {
     // (תצוגה, אישור, ביצוע בפועל), כדי שהקליק יפגע במקום הנכון על המסך.
     next.action = scaleActionToRealScreen(
       next.action,
-      screenshot.width / screenshot.visionWidth,
-      screenshot.height / screenshot.visionHeight,
+      screenshot.realWidth / screenshot.width,
+      screenshot.realHeight / screenshot.height,
     );
 
     params.onUpdate({

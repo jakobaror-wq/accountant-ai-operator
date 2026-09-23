@@ -2,14 +2,17 @@ import { desktopCapturer, screen } from "electron";
 import { mouse, keyboard, Point, Button, Key } from "@nut-tree-fork/nut-js";
 
 export interface ScreenshotResult {
-  /** צילום ברזולוציה המקורית - לתצוגה למשתמש (UI/יומן ביקורת), לא נשלח ל-AI. */
+  /** התמונה היחידה שמקודדת בפועל - ברזולוציה המקורית, או מוקטנת אם המסך
+   * גדול משמעותית (ר' MAX_VISION_DIMENSION). משמשת גם לתצוגה למשתמש
+   * (UI, לא נשמר ביומן הביקורת) וגם לקריאה ל-AI - אותה תמונה בדיוק. */
   base64Png: string;
   width: number;
   height: number;
-  /** מה שבאמת נשלח למודל ה-AI - מוקטן רק אם המסך גדול משמעותית (ר' MAX_VISION_DIMENSION). */
-  visionBase64Png: string;
-  visionWidth: number;
-  visionHeight: number;
+  /** הרזולוציה הפיזית האמיתית של המסך - לא בהכרח שווה ל-width/height למעלה
+   * (אם צולמה גרסה מוקטנת). משמשת רק לקנפוס קואורדינטות קליק חזרה למסך
+   * האמיתי (ר' task-runner.ts, scaleActionToRealScreen). */
+  realWidth: number;
+  realHeight: number;
 }
 
 /**
@@ -36,17 +39,18 @@ export async function captureScreenshot(): Promise<ScreenshotResult> {
   const fullImage = source.thumbnail;
   const longestSide = Math.max(width, height);
   const scale = longestSide > MAX_VISION_DIMENSION ? MAX_VISION_DIMENSION / longestSide : 1;
-  const visionImage =
-    scale < 1 ? fullImage.resize({ width: Math.round(width * scale), height: Math.round(height * scale) }) : fullImage;
-  const visionSize = visionImage.getSize();
+  // מקודדים תמונה אחת בלבד (לא שתיים) - אם המסך בגודל רגיל, זו התמונה
+  // המקורית ממש; רק על מסכים גדולים משמעותית יש בכלל resize. אין יותר
+  // קידוד PNG כפול (מקור + מוקטן) בכל צעד - רק זו שבאמת בשימוש.
+  const image = scale < 1 ? fullImage.resize({ width: Math.round(width * scale), height: Math.round(height * scale) }) : fullImage;
+  const size = image.getSize();
 
   return {
-    base64Png: fullImage.toPNG().toString("base64"),
-    width,
-    height,
-    visionBase64Png: visionImage.toPNG().toString("base64"),
-    visionWidth: visionSize.width,
-    visionHeight: visionSize.height,
+    base64Png: image.toPNG().toString("base64"),
+    width: size.width,
+    height: size.height,
+    realWidth: width,
+    realHeight: height,
   };
 }
 
