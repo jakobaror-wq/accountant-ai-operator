@@ -61,6 +61,7 @@ type TaskUpdateEvent =
       screenLabel: string;
       confidence: number;
       action: ComputerActionRequest;
+      source: "ai" | "macro";
     }
   | {
       type: "awaiting-approval";

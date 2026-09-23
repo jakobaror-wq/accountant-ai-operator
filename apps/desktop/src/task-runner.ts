@@ -37,6 +37,10 @@ export type TaskUpdateEvent =
       screenLabel: string;
       confidence: number;
       action: HistoryEntry["action"];
+      /** "macro" = הוחלט מקאש (ר' macros.ts) בלי קריאת AI לצעד הזה, "ai" =
+       * קריאה חיה ל-Grok. מוצג ב-UI כדי שאפשר יהיה לצפות/לאבחן את התכונה
+       * שטרם אומתה בפועל - ר' docs/09-COMPUTER-USE-AGENT.md. */
+      source: "ai" | "macro";
     }
   | {
       type: "awaiting-approval";
@@ -284,6 +288,7 @@ export async function runComputerUseTask(params: {
       screenLabel: next.screenLabel,
       confidence: next.confidence,
       action: next.action,
+      source: usedMacro ? "macro" : "ai",
     });
 
     if (next.action.type === "done") {

@@ -118,12 +118,16 @@ export default function AgentPage() {
         case "action": {
           const confidencePct = Math.round(event.confidence * 100);
           const lowConfidence = event.confidence < CONFIDENCE_WARNING_THRESHOLD ? " ⚠️" : "";
+          // "source" מבחין בין החלטה חיה של ה-AI לבין שידור-חוזר ממאקרו (ר'
+          // docs/09-COMPUTER-USE-AGENT.md) - תכונה חדשה שטרם אומתה בפועל,
+          // אז חשוב שהמשתמש יראה בבירור מתי היא פעילה כדי לעקוב/לאבחן אותה.
+          const sourceLabel = event.source === "macro" ? " 🔁 [ממאקרו, לא AI]" : "";
           setLog((prev) => [
             ...prev,
             {
               step: event.step,
               kind: "reasoning",
-              text: `[${event.screenLabel}, ביטחון ${confidencePct}%${lowConfidence}] ${event.reasoning} → ${event.action.type}`,
+              text: `[${event.screenLabel}, ביטחון ${confidencePct}%${lowConfidence}]${sourceLabel} ${event.reasoning} → ${event.action.type}`,
             },
           ]);
           break;
