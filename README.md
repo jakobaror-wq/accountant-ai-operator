@@ -2,29 +2,36 @@
 
 > סוכן AI אוטונומי המפעיל בפועל תוכנות חשבונאות ישראליות קיימות (חשבשבת, חיסולית, שיקלולית, קונטו), מבצע תהליך עבודה מלא ומגיש חבילת אישור לרו"ח - לא Dashboard, לא אינטגרציית API בלבד.
 
-**סטטוס נוכחי: v1 - מסך חיבורים (`apps/web`). עדיין אין קריאת נתונים אוטומטית מאף תוכנה, ואין שום Connector אמיתי - ר' [docs/08-V1-CONNECTION-MODEL.md](docs/08-V1-CONNECTION-MODEL.md).**
+**סטטוס נוכחי: סוכן AI פעיל שמפעיל תוכנות בפועל (מסך `/agent`) - לא רק מסך חיבורים. ר' [docs/09-COMPUTER-USE-AGENT.md](docs/09-COMPUTER-USE-AGENT.md) לפירוט המלא.**
 
 ## הרצה מקומית
 
 ```bash
+# אתר ה-UI (Next.js)
 cd apps/web
 npm install
-npm run dev
+npm run dev            # פועל על http://localhost:3100
+
+# אפליקציית שולחן העבודה (Electron) - בטרמינל נפרד
+cd apps/desktop
+npm install
+AIOP_WEB_URL=http://localhost:3100 npm start
 ```
 
-## מסמכי שלב 0
+## מסמכים
 
 | מסמך | תוכן |
 |---|---|
 | [docs/00-PRD.md](docs/00-PRD.md) | חזון, פרסונות, תהליכי משתמש, קריטריוני הצלחה, מה לא בפנים |
-| [docs/01-ARCHITECTURE.md](docs/01-ARCHITECTURE.md) | מבנה ה-Monorepo, מה רץ איפה (Vercel/Supabase מול מחשב מקומי), זרימת נתונים |
+| [docs/01-ARCHITECTURE.md](docs/01-ARCHITECTURE.md) | הארכיטקטורה בפועל - תהליך Electron אחד, לא ענן+Local Agent נפרד |
 | [docs/02-THREAT-MODEL.md](docs/02-THREAT-MODEL.md) | נכסים, תוקפים, גבולות אמון, איומים ומיטיגציות |
 | [docs/03-AGENT-STATE-MACHINE.md](docs/03-AGENT-STATE-MACHINE.md) | מצבי הסוכן, מעברים, Checkpoints, התאוששות |
-| [docs/04-TOOL-REGISTRY.md](docs/04-TOOL-REGISTRY.md) | כל Tool שה-AI רשאי לקרוא לו, סכימת קלט/פלט, מתי נדרש אישור |
-| [docs/05-DATA-MODEL.md](docs/05-DATA-MODEL.md) | סכימת Supabase, ישויות, RLS, שכבות זיכרון |
-| [docs/06-MVP-PLAN.md](docs/06-MVP-PLAN.md) | מה בדיוק ב-MVP, תוכנת Demo, קריטריוני קבלה |
-| [docs/07-ASSUMPTIONS-OPEN-QUESTIONS.md](docs/07-ASSUMPTIONS-OPEN-QUESTIONS.md) | הנחות, חסמים ושאלות פתוחות לפני כל קוד משמעותי |
-| [docs/08-V1-CONNECTION-MODEL.md](docs/08-V1-CONNECTION-MODEL.md) | מודל החיבור ב-v1: כפתורי דפדפן מול Local Launcher לתוכנות מותקנות |
+| [docs/04-TOOL-REGISTRY.md](docs/04-TOOL-REGISTRY.md) | פעולות המחשב הגולמיות שה-AI מבצע, ומה עדיין לא אכיפה דטרמיניסטית |
+| [docs/05-DATA-MODEL.md](docs/05-DATA-MODEL.md) | קבצים מקומיים (לא Supabase) - יומן ביקורת, זיכרון מסכים, הגדרות מוצפנות |
+| [docs/06-MVP-PLAN.md](docs/06-MVP-PLAN.md) | **היסטורי** - התוכנית המקורית, הוחלפה בפועל בכיוון אחר |
+| [docs/07-ASSUMPTIONS-OPEN-QUESTIONS.md](docs/07-ASSUMPTIONS-OPEN-QUESTIONS.md) | הנחות, חסמים ושאלות פתוחות |
+| [docs/08-V1-CONNECTION-MODEL.md](docs/08-V1-CONNECTION-MODEL.md) | מודל חיבור התוכנות - גרירה/בחירת קובץ מקומית |
+| [docs/09-COMPUTER-USE-AGENT.md](docs/09-COMPUTER-USE-AGENT.md) | לולאת ה-AI Agent - צילום מסך, החלטה, אישור, ביצוע |
 
 ## עקרון על
 

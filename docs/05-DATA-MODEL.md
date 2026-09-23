@@ -1,68 +1,75 @@
-# Data Model - Accountant AI Operator (Supabase)
+# Data Model - Accountant AI Operator
 
-## 1. עקרון RLS
+> **עדכון (2026-09-23):** מסמך זה שוכתב במלואו. אין Supabase בקוד בפועל - אין `office`/`client`/`tax_year`/`workflow_run`/`approval_package`/`skill` וכו'. כל האחסון הוא **קבצים מקומיים בתוך `app.getPath("userData")`** של אפליקציית ה-Electron, לעולם לא נשלח לשום שרת חוץ מ-xAI (לצורך ה-vision עצמו) ו-GitHub (בדיקת גרסה).
 
-כל טבלה נגישה דרך `office_id` (משרד רו"ח) כגבול Multi-tenancy ראשי; משתמש שייך למשרד אחד או יותר דרך `office_member`. אין Row גלוי בין משרדים. Policies נבדקות דרך `auth.uid()` מול `office_member`, לא דרך שדה על הטבלה עצמה (מונע טעות "שכחתי RLS על טבלת ילד").
+## 1. עקרון: קבצים מקומיים, לא סכמת DB עם RLS
 
-## 2. ישויות ליבה
+אין Multi-tenancy, אין `office_id`, אין RLS - זו החלטה מפורשת (ר' `07-ASSUMPTIONS-OPEN-QUESTIONS.md` §3.1): **מחשב לוקאלי יחיד**, לא ריבוי-משתמשים. כל נתון שמור בקובץ JSON או קובץ מוצפן בתיקיית `userData` של Electron - אין DB, אין Auth, אין רשת מעורבת בשמירה/קריאה של אף אחד מהם.
 
-```
-office (משרד רו"ח)
-  └─ office_member (user_id, office_id, role: owner|accountant|bookkeeper|admin)
-  └─ client (לקוח, שייך למשרד)
-       └─ tax_year (client_id, year, status: open|in_review|closed)
-  └─ device (Local Agent מזווג - device_token_hash, paired_at, revoked_at, last_seen_at)
-  └─ connector_credential_ref (office_id, connector_id, device_id, credential_label)
-       -- שים לב: אין כאן סיסמה. רק תיוג/הפניה. הסיסמה בפועל חיה ב-DPAPI על המחשב המקומי בלבד.
-```
+## 2. `settings.enc` - מפתח API ופרטי התחברות (מוצפן)
 
-## 3. Workflow / Run
+מנוהל ב-`apps/desktop/src/settings.ts`. קובץ יחיד, מוצפן ב-`safeStorage` (DPAPI על Windows, ברמת מערכת ההפעלה - לא מפתח הצפנה שמנוהל בקוד). תוכן ה-JSON הפנימי (אחרי פענוח):
 
-```
-workflow_definition (office_id?, name, version, source: "manual" | "learned")
-  └─ workflow_step_definition (order, tool_name, input_schema_ref, requires_approval: bool)
-
-workflow_run (workflow_definition_id, client_id, tax_year_id, status, started_by, started_at)
-  └─ workflow_step (run_id, seq, tool_name, status, input, output(ToolResult), checkpoint_hash, confidence, created_at)
-  └─ evidence (step_id, kind, storage_ref, captured_at)   -- storage_ref -> Supabase Storage, לא Base64 בטבלה
+```ts
+interface StoredSettings {
+  xaiApiKey?: string;
+  connectorCredentials?: Record<string, { username: string; password: string }>;  // לפי connectorId
+}
 ```
 
-## 4. החלטות, אישורים, Audit
+אם `safeStorage.isEncryptionAvailable()` מחזיר `false` (נדיר, בעיקר בסביבות בדיקה ללא keyring), הכתיבה נכשלת בעדינות (מחזירה `false`) והמשתמש מקבל הודעה ברורה - לא קריסה שקטה.
 
+## 3. `runs/*.json` - יומן ביקורת (audit trail)
+
+מנוהל ב-`apps/desktop/src/run-history.ts`. קובץ JSON אחד לכל ריצה (`<startedAt-מנוקה>.json`), נכתב מחדש (upsert, לא append) בכל checkpoint לאורך הריצה:
+
+```ts
+interface StoredRunRecord {
+  id: string;
+  connectorId: string;
+  task: string;
+  startedAt: string;
+  finishedAt: string;
+  status: "in-progress" | "done" | "stopped" | "rejected" | "error" | "max-steps-reached";
+  summary?: string;
+  steps: RunStepRecord[];  // step, timestamp, reasoning?, screenLabel?, confidence?, action?, requiresApproval?, decision?, outcome, error?
+}
 ```
-decision (run_id, step_id?, question, data_used(jsonb), alternatives(jsonb), chosen, rationale, confidence, rule_ref?)
 
-approval_package (run_id, status: draft|pending|approved|partially_approved|rejected, executive_summary, created_at)
-  └─ approval_item (package_id, system, client_field/account, previous_value, proposed_value, reason, source, risk_level, reversible: bool, decision: pending|approved|rejected|edited, edited_value?)
-  └─ exception (package_id, kind: missing_info|mismatch|failed_action|suspicious_value|needs_human_judgment, description, resolved: bool)
+**חשוב:** `action` בכל `RunStepRecord` הוא תמיד הגרסה הסמלית (למשל `{"type":"type_credential","field":"password"}`, לעולם לא הערך האמיתי - ר' `04-TOOL-REGISTRY.md` §3). אין צילומי מסך שמורים ביומן - רק metadata טקסטואלי.
 
-audit_event (office_id, run_id?, actor(user|agent), action, payload_hash, payload_ref, occurred_at)
-  -- Append-only. אין UPDATE/DELETE ברמת ה-DB (Policy חוסם, רק INSERT מותר לתפקיד השירות)
+נטען פעם אחת עצל לזיכרון (Map, לפי `id`) ומתעדכן ישירות בכתיבה - לא נסרק מחדש מהדיסק בכל קריאה (תוקן ב-commit "Cache run history in memory instead of re-scanning disk on every call"). `findIncompleteRun(connectorId)` מוצא ריצה שנשארה `in-progress` - סימן שהאפליקציה נסגרה/קרסה באמצע, לאפשר המשך (`resumeFrom`) בלי לחזור על פעולות שכבר בוצעו.
+
+## 4. `connectors/<connectorId>/screens.json` - זיכרון מסכים
+
+מנוהל ב-`apps/desktop/src/screen-memory.ts`. קובץ JSON נפרד לכל connector:
+
+```ts
+interface LearnedScreen {
+  label: string;
+  timesSeen: number;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  exampleReasoning: string;
+}
 ```
 
-## 5. Skills (Training Mode)
+נלמד **רק** ממה שהסוכן ראה בפועל בזמן ריצה - אין שום דבר כתוב מראש על אף תוכנה ספציפית (עקרון שנשמר מהתכנון המקורי, ר' `07-ASSUMPTIONS-OPEN-QUESTIONS.md`). משמש כרמז הקשר ל-AI ("אם המסך תואם אחד המסכים המוכרים, השתמש באותו שם") - לא כמנגנון עקיפת-AI (אין עדיין "מאקרו" שמדלג על קריאת ה-AI לגמרי - רעיון פתוח, לא ממומש). נטען עצל לפי connector (לא כל התיקייה בבת אחת) ומתעדכן ישירות בכתיבה, מאותה סיבה כמו יומן הביקורת.
 
-```
-skill (office_id?, name, connector_id, version, created_from_run_id?, status: draft|approved)
-  └─ skill_step (order, semantic_action, screen_ref, field_ref, value_source: "user_input"|"prior_step"|"constant", validation_rule?)
-```
+## 5. `connector-paths.json` - נתיבי קבצי הפעלה
 
-`created_from_run_id` מקשר ל-Run של Training Mode שממנו נלמד ה-Skill, לשקיפות מקור.
+מנוהל ב-`apps/desktop/src/main.ts` (`readConnectorPaths`/`writeConnectorPaths`). מיפוי פשוט `Record<connectorId, absolutePath>` - הנתיב לקובץ ה-`.exe` (או מה שנבחר/נגרר) של כל תוכנה. לא מוצפן (לא נתון רגיש) - רק מקומי.
 
-## 6. שכבות זיכרון (חובה להפריד - מהמפרט המקורי)
+## 6. אין שכבות זיכרון היררכיות (office/client/tax_year)
 
-| שכבה | טבלה/מנגנון | Scope |
-|---|---|---|
-| כללי משרד | `office_memory` (key, value, updated_by) | office_id בלבד |
-| לקוח | `client_memory` (key, value) | client_id |
-| שנת מס | `tax_year_memory` (key, value) | tax_year_id |
-| Workflow | `workflow_definition` עצמו + `office_memory` מתויג | workflow_definition_id |
-| הרצה זמנית | לא נשמר מעבר ל-`workflow_run` הפעיל - נמחק/מתיישן בסיום | run_id |
+בניגוד לתכנון המקורי - אין היום שום זיכרון בסקופ של "משרד"/"לקוח"/"שנת מס"/"Workflow". הזיכרון היחיד הוא `screens.json` לפי connector (סעיף 4). אם בעתיד יידרש הקשר ברמת לקוח/שנה, זו תוספת חדשה, לא הרחבה של מנגנון קיים.
 
-חשוב: שימוש בזיכרון קודם **כהשוואה** (לא כהחלטה אוטומטית) חייב תיעוד ב-`decision.data_used` - ר' דרישת "הצג למשתמש כאשר החלטה קודמת שימשה כהשוואה" במפרט המקור. אין טבלה נפרדת לזה; זה שדה בתוך `decision`.
+## 7. אין Decision Log / Approval Package נפרדים
 
-## 7. הערות מפורשות - מה עדיין לא סגור
+אין טבלת `decision` נפרדת עם `alternatives`/`rationale`/`confidence` לכל החלטה - ה-`reasoning` וה-`confidence` שכבר קיימים בכל `RunStepRecord` (סעיף 3) הם כל מה שנשמר. אין `approval_package`/`approval_item`/`exception` נפרדים - אישור/דחייה הם רק שדה `decision` על הצעד עצמו.
 
-- סכמת RLS המדויקת (policies בפועל, לא רק העיקרון) תיכתב כ-migration בשלב 1, לא כאן.
-- אין עדיין החלטה אם `evidence`/`screenshot` נשמרים ב-Supabase Storage הרגיל או ב-Bucket עם מדיניות שימור מחמירה יותר (רגישות גבוהה, ר' Threat Model סעיף 1) - שאלה פתוחה ב-`07`.
-- טבלת `connector_credential_ref` מכוונת מתוך ההנחה ש-Local Agent יכול לשלוח "יש לי credential בשם X עבור connector Y" בלי לחשוף את הערך - יש לוודא זאת מול מימוש ה-Local Agent בפועל בשלב 2.
+## 8. מה עדיין פתוח
+
+- אין עדיין מנגנון ניקוי/pruning ליומן הביקורת - הוא גדל לצמיתות (ר' `docs/07-ASSUMPTIONS-OPEN-QUESTIONS.md` לשאלת מדיניות שימור נתונים).
+- אין עדיין "מאקרו" שממפה רצף פעולות שכבר בוצע לביצוע חוזר בלי קריאת AI - נדון כרעיון יעילות עתידי, לא קיים.
+</content>

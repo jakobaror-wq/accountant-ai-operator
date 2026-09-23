@@ -1,124 +1,96 @@
 # Architecture - Accountant AI Operator
 
-> **עדכון (2026-09-17):** ההיקף הנוכחי הוחלט כ**מחשב לוקאלי יחיד במשרד**, לא Multi-tenant (ר' `07-ASSUMPTIONS-OPEN-QUESTIONS.md` סעיף 3.1). המשמעות: כל רכיבי ה"ענן" שמתוארים בטבלה ובמבנה למטה (Workflow Engine/Approval Engine/State ב-Supabase) **נדחים לשלב עתידי** - בפועל הכול (כולל Approval Package, Audit Trail, Checkpoints כשייבנו) ירוץ בתוך `apps/desktop` בלבד, ללא תלות ברשת/בענן לשם כך. שאר עקרונות הסעיף הזה (Tool Call מובנה, לא קליק ישיר; שכבת Computer Use; סדר עדיפויות ה-Connector) עדיין תקפים במלואם - רק מיקום ההרצה של השכבות ה"עליונות" משתנה מ"ענן" ל"אותה אפליקציית Desktop".
+> **עדכון (2026-09-23):** מסמך זה שוכתב במלואו כדי לתאר את הארכיטקטורה **בפועל**, אחרי שהכיוון הארכיטקטוני המקורי (ענן + Local Agent נפרד) הוחלף לגמרי. הגרסה הקודמת של המסמך (המתוארת בענן/Supabase/Local Agent נפרד) נשמרת בהיסטוריית ה-git לרפרנס, אך אינה משקפת את הקוד הקיים.
 
-## 1. עיקרון מפריד: מה רץ בענן מול מה שחייב לרוץ מקומית (היסטורי - ר' עדכון למעלה)
+## 1. עקרון-העל: הכול רץ בתוך אפליקציית ה-Desktop
 
-זו ההחלטה הארכיטקטונית המרכזית של כל המערכת, ונובעת ישירות מדרישת האבטחה (סעיף "התחברות אוטומטית" במפרט המקור):
+בניגוד לתכנון המקורי (Orchestrator בענן + Local Agent נפרד ב-.NET שמתקשר איתו דרך Supabase Realtime), הארכיטקטון בפועל הרבה יותר פשוט: **תהליך Electron אחד** (`apps/desktop`) מריץ את כל הלוגיקה - צילומי מסך, קריאה ל-AI, ביצוע קליקים/הקלדה, אחסון מוצפן מקומי, יומן ביקורת. אין Orchestrator נפרד, אין Workflow Engine, אין State בענן.
 
-| רץ ב-Vercel/Supabase (ענן) | רץ חובה על המחשב המקומי (Windows) |
+| רץ ב-Vercel (`apps/web`) | רץ בתוך תהליך ה-Electron (`apps/desktop`) |
 |---|---|
-| ממשק צ'אט, Dashboard, Approval Inbox, Decision Log, Audit Trail (תצוגה) | פתיחת/הפעלת חשבשבת/חיסולית/שיקלולית/קונטו בפועל |
-| AI Orchestrator (תכנון, קבלת החלטות, ניסוח Tool Calls) | שליפת Credentials מ-Windows Credential Manager / DPAPI |
-| Workflow Engine (State Machine, Checkpoints) - ה-**state** נשמר ב-Supabase | ביצוע ה-Click/Type/UI Automation/Playwright בפועל |
-| Approval Engine (חוקי מתי נדרש אישור) | OCR/Vision Fallback על תמונות מסך מקומיות |
-| Audit Trail (Storage) | Device Pairing - Handshake מול המשרד |
-| Skills Library, Workflow Builder (עריכה/תצוגה) | הקלטת פעולות סמנטיות ב-Training Mode |
+| דפי UI סטטיים/React בלבד - `/agent`, `/audit`, `/integrations`, `/download` | כל הלוגיקה בפועל: לולאת ה-agent, צילום מסך, קריאות ל-AI, ביצוע עכבר/מקלדת |
+| נטען **בתוך** חלון ה-`BrowserWindow` של Electron - זה לא "הענן" עבור המשתמש, זו רק שכבת התצוגה | אחסון מוצפן מקומי (`safeStorage`/DPAPI): מפתח ה-API, סיסמאות התחברות לתוכנות |
+| אין שום נתיב קובץ, סיסמה, צילום מסך, או תוצאה של ריצה שנשלח לשרת Vercel | יומן ביקורת מקומי (JSON לכל ריצה), זיכרון מסכים לכל connector |
+| ה-API היחיד שהוא קורא לו הוא `api.github.com` (בדיקת גרסה להורדה) | הקריאה החיצונית היחידה מלבד GitHub: `api.x.ai` (xAI Grok, לצורך ה-vision) |
 
-**מסקנה קריטית:** ה-AI (שרץ בענן) **לעולם** לא מקבל סיסמה, לא רואה screenshot גולמי עם מידע רגיש ללא סינון, ולא שולח קליק ישירות. הוא שולח **Tool Call מובנה** ("readTrialBalance עבור לקוח X") ל-Local Agent; ה-Local Agent הוא היחיד שנוגע בפועל בתוכנה, במקלדת, בעכבר ובאישורים. הענן מקבל בחזרה רק **תוצאה מובנית** (`ToolResult` - ר' `04-TOOL-REGISTRY.md`), לא זרם וידאו/מקלדת גולמי.
+**מסקנה קריטית שעדיין תקפה מהתכנון המקורי:** ה-AI לעולם לא מקבל סיסמה בפועל. כשצריך להזין שם משתמש/סיסמה שמורים, המודל מבקש פעולה סמלית (`type_credential`, ר' סעיף 4) - הערך האמיתי נשלף מקומית ומוקלד רגע לפני הביצוע, בלי לעבור אף פעם דרך הבקשה/תשובה מול ה-AI ובלי להישמר ביומן הביקורת.
 
-## 2. מבנה ה-Monorepo (מתוכנן - לא נוצר עדיין בקוד בשלב 0)
+## 2. מבנה המונוריפו (כפי שהוא בפועל)
 
 ```
 accountant-ai-operator/
 ├── apps/
-│   ├── web/                 # Next.js - Dashboard, צ'אט, Approval Inbox וכו' (Vercel)
-│   ├── local-agent/         # .NET - שירות Windows, Computer Use בפועל
-│   └── browser-extension/   # Chrome, מוגבל להרשאות מינימליות
-├── services/
-│   ├── ai-orchestrator/     # תכנון + קבלת החלטות (מריץ מול Claude API)
-│   ├── workflow-engine/     # State Machine, Checkpoints, Resume
-│   └── approval-engine/     # חוקי אישור, Selective Approval
-├── packages/
-│   ├── computer-use/        # שכבת הפעלת מחשב (ר' סעיף 4)
-│   ├── connectors/          # Connector לכל תוכנה (ר' סעיף 5)
-│   ├── skills/              # Skills שנלמדו/הוגדרו
-│   ├── accounting-engine/   # כללים דטרמיניסטיים (איזון חובה/זכות, בדיקות סבירות...)
-│   ├── audit/                # תיעוד פעולות והחלטות
-│   └── shared/               # Types/Zod Schemas/Utilities משותפים
-└── supabase/                 # DB, Auth, Storage, RLS - ר' 05-DATA-MODEL.md
+│   ├── web/                      # Next.js, דפי ה-UI, נפרס ל-Vercel
+│   │   ├── app/agent/            # מסך ה-AI Agent - משימות, תור, אישור/שאלה, לוג
+│   │   ├── app/audit/            # יומן ביקורת מלא, עם עימוד וייצוא
+│   │   ├── app/integrations/     # חיבור תוכנות - גרירה/בחירת קובץ
+│   │   ├── app/download/         # עמוד הורדת האפליקציה
+│   │   ├── app/api/download/desktop/route.ts  # מפנה ל-.exe העדכני מ-GitHub Releases
+│   │   ├── components/           # ConnectorCard, IntegrationsGrid, RunHistory וכו'
+│   │   ├── lib/connectors.ts     # רשימת התוכנות הנתמכות (סטטית)
+│   │   └── types/electron-api.d.ts   # טיפוסי TypeScript מקבילים ידנית ל-preload.ts
+│   └── desktop/                  # Electron - כל הלוגיקה בפועל
+│       └── src/
+│           ├── main.ts           # תהליך ה-Main: חלון, IPC handlers, auto-updater
+│           ├── preload.ts        # contextBridge - חושף window.electronAPI לצד ה-renderer
+│           ├── task-runner.ts    # לולאת ה-agent: צילום → החלטת AI → אישור? → ביצוע → חזור
+│           ├── computer-use.ts   # צילום מסך (desktopCapturer) + עכבר/מקלדת (nut-js)
+│           ├── ai/grok.ts        # קליינט xAI Grok, system prompt, ניתוח תשובה בטוח
+│           ├── settings.ts       # אחסון מוצפן מקומי - מפתח API + פרטי התחברות
+│           ├── screen-memory.ts  # זיכרון מסכים שנלמדו בפועל, לפי connector
+│           ├── run-history.ts    # יומן ביקורת מקומי (JSON per run)
+│           └── window-reload.ts  # ניסיון חוזר אוטומטי אם טעינת ה-UI נכשלת
+└── docs/                          # המסמכים האלה
 ```
 
-Web + Services + Supabase נפרסים בענן (Vercel + Supabase). `local-agent` ו-`browser-extension` הם ה**חלקים היחידים** שמותקנים ורצים אצל הלקוח.
+אין `services/`, אין `packages/`, אין `apps/local-agent`, אין Supabase בקוד בפועל (יש שרידי SQL ב-`supabase/migrations` שלא בשימוש על ידי אף אפליקציה).
 
-## 3. זרימת נתונים (Request Lifecycle)
+## 3. זרימת הריצה בפועל (Request Lifecycle)
 
 ```
-משתמש (צ'אט, apps/web)
-   │  "הכן דוח שנתי ללקוח X לשנת 2025"
+משתמש (מסך /agent) מקליד משימה, לוחץ "התחל"
+   │  IPC: aiop:run-task(task, connectorId)
    ▼
-ai-orchestrator  ──(1) מזהה לקוח/שנה, בונה Plan ראשוני
-   │
+main.ts  - נועל (רק ריצה אחת בו-זמנית), קורא ל-task-runner.ts
    ▼
-workflow-engine  ──(2) יוצר Workflow Run + Checkpoint 0, שומר ל-Supabase
-   │  Tool Call (למשל inspectApplicationState) מוצפן/מזוהה ל-Local Agent המשויך למשרד
-   ▼  (WebSocket/Realtime Channel מאומת, לא HTTP פתוח)
-apps/local-agent (אצל הלקוח)
-   │  (3) שולף Credential מ-DPAPI/Credential Manager - בעצמו, לא מהענן
-   │  (4) מפעיל Connector (חשבשבת/וכו') לפי סדר העדיפות (API>קבצים>Browser>UIA>Vision)
-   │  (5) מבצע פעולה בפועל, קורא תוצאה, בונה evidence (לוג סמנטי + screenshot Reference מקומי)
+task-runner.ts - לולאה עד MAX_STEPS=40:
+   1. computer-use.ts.captureScreenshot() - צילום, מוקטן אם המסך גדול מ-1600px
+   2. ai/grok.ts.requestNextAction() - שולח היסטוריה (עד 20 צעדים אחרונים) + צילום ל-xAI,
+      מקבל reasoning + screenLabel + confidence + requiresApproval + action
+      (עם retry אוטומטי על תקלות רשת/שרת חולפות, לא על שגיאות מפתח API)
+   3. אם action="ask" - עוצר, שואל את המשתמש, ממתין לתשובה, ממשיך
+   4. אם requiresApproval=true - עוצר, מציג למשתמש לאישור/דחייה
+   5. אם action="type_credential" - שולף את הסיסמה/שם המשתמש האמיתיים לוקאלית
+      (settings.ts), מקליד אותם - הערך עצמו לא נכנס ליומן/להיסטוריה
+   6. מבצע (computer-use.ts.executeAction) - עכבר/מקלדת בפועל
+   7. שומר checkpoint ליומן הביקורת (run-history.ts) + מעדכן זיכרון מסכים (screen-memory.ts)
    ▼
-ToolResult מובנה חוזר ל-workflow-engine
-   │  (6) accounting-engine מריץ בדיקות דטרמיניסטיות (איזון, סבירות, כפילות)
-   │  (7) ai-orchestrator מפרש, מחליט על הצעד הבא / שואל הבהרה / ממשיך
+עד action="done", שגיאה, דחייה, עצירה ידנית, או MAX_STEPS
    ▼
-Checkpoint חדש נשמר (Resumable מכאן והלאה)
-   │  ... חוזר על עצמו עד השלמת התוכנית ...
-   ▼
-approval-engine בונה Approval Package
-   ▼
-Approval Inbox (apps/web) - משתמש מאשר/דוחה/עורך
-   ▼
-executeApprovedActions - רק כעת מתבצע רישום סופי/בלתי הפיך, שוב דרך Local Agent
-   ▼
-audit מתעד הכול
+run-history.ts שומר את הריצה המלאה - נגיש דרך /audit
 ```
 
-## 4. שכבת Computer Use (`packages/computer-use`)
+אין Workflow Engine נפרד, אין accounting-engine דטרמיניסטי, אין Approval Package מובנה - ה-`requiresApproval` נקבע ע"י המודל עצמו לפי כללים ב-system prompt (ר' `04-TOOL-REGISTRY.md` סעיף "אכיפת אישור" לפרטים על המגבלה האמיתית כאן).
 
-חייבת לרוץ בתוך `local-agent` (Windows), לא בענן. שכבת הפשטה אחידה מעל:
-1. **Windows UI Automation** (UIA) - ראשי לאפליקציות Desktop (חיסולית, שיקלולית, חשבשבת אם Desktop).
-2. **Playwright** - לתוכנות מבוססות Web (קונטו אם Web, ואולי חשבשבת Web).
-3. **OCR/Vision** - Fallback בלבד, כשה-2 הראשונים נכשלים (לפי דרישת המפרט המקורי - לא ערוץ ראשי).
+## 4. איך הסוכן "רואה" את המסך - Vision-first, לא UIA/Playwright
 
-כל פעולה עוברת דרך "אסטרטגיית איתור" מדורגת (מפורט ב-`03-AGENT-STATE-MACHINE.md` סעיף Recovery): Accessibility Tree → מזהה סמנטי → OCR/Vision → בדיקת שינוי מסך → **לעולם לא קליק לפי קואורדינטות בלבד ללא אימות**.
+בניגוד לתכנון המקורי (UIA ראשי, Vision כ-Fallback בלבד): המימוש בפועל הוא **Vision-first ובלעדי**. אין שכבת Accessibility Tree, אין Playwright, אין "אסטרטגיית איתור מדורגת". xAI Grok מקבל צילום מסך גולמי (base64 PNG) ובוחר ישירות קואורדינטת קליק/טקסט להקליד/מקש ללחוץ, לפי מה שהוא רואה בתמונה.
 
-## 5. Software Connector - תבנית אחידה (`packages/connectors`)
+מגבלת ביטחון קיימת בפועל: `CONFIDENCE_THRESHOLD = 0.95` ב-`ai/grok.ts` - אם המודל מדווח ביטחון נמוך יותר, ה-system prompt מנחה אותו לבחור `action: "ask"` במקום לנחש. זו בקרה בפרומפט, לא אכיפה דטרמיניסטית בקוד (הקוד רק דואג לברירת מחדל בטוחה אם השדה חסר/פגום - ר' `requestNextAction`'s safe defaults).
 
-כל Connector (`hashavshevet`, `hisulit`, `shikulit`, `konto`, ובעתיד נוספים) הוא מודול שמממש ממשק קבוע:
+## 5. "Connector" - הרבה יותר פשוט ממה שתוכנן
 
-```ts
-interface SoftwareConnector {
-  id: string;
-  openApplication(): Promise<ToolResult>;
-  detectWindow(): Promise<ToolResult>;
-  selectClient(clientId: string): Promise<ToolResult>;
-  knownScreens: ScreenDescriptor[];
-  actions: ConnectorAction[];            // כל אחת עם Zod schema לקלט/פלט
-  preconditions: Precondition[];
-  successCriteria: SuccessCriterion[];
-  knownErrors: KnownError[];
-  verifyResult(action, result): Promise<VerificationOutcome>;
-  actionsRequiringApproval: string[];     // תת-קבוצה של actions
-  recoveryStrategy: RecoveryStrategy;
-}
-```
+אין ממשק `SoftwareConnector` עם Zod schemas, `verifyResult`, `recoveryStrategy` וכו'. Connector בפועל הוא רשומה סטטית (`apps/web/lib/connectors.ts`): `id`, `name`, `description`. המשתמש בוחר/גורר את קובץ ה-`.exe` (או קיצור דרך) פעם אחת דרך `/integrations`, הנתיב נשמר מקומית (`connector-paths.json`), ומשם האפליקציה רק מפעילה אותו (`shell.openPath`) ומריצה את לולאת ה-Vision מעליו - אין אינטגרציה ייעודית לפי סוג התוכנה.
 
-סדר עדיפות מימוש לכל פעולה בתוך Connector (מהמפרט המקורי): **API רשמי → ייבוא/ייצוא קבצים → Browser Automation → Windows UI Automation → Vision/OCR**. גם כשמשתמשים ב-API, `apps/web` מציג למשתמש מה בוצע - שקיפות מלאה בכל מקרה.
+תוכנות נתמכות כרגע: Hashavshevet (חשבשבת), Hisulit (חיסולית), Shikulit (שיקולית), Konto (קונטו), Dokka.
 
-**הערה קריטית:** אף Connector לא ייבנה במלואו ולא יוצג כ"פעיל" לפני קבלת תיעוד רשמי, גישה מורשית וסביבת בדיקה מהיצרן הרלוונטי (ר' `07-ASSUMPTIONS-OPEN-QUESTIONS.md`). כרגע יש רק את ה-Interface והמבנה, ללא מימוש.
+**הערה שעדיין תקפה מהתכנון המקורי:** אף Connector לא מוצג כמבוסס על תיעוד רשמי/API של היצרן - זו אוטומציית Vision גנרית, לא אינטגרציה רשמית (ר' `07-ASSUMPTIONS-OPEN-QUESTIONS.md`).
 
-## 6. AI Orchestrator - איך הוא "מבין" מסך
+## 6. סיכונים ארכיטקטוניים מרכזיים (מעודכן)
 
-ה-Orchestrator **לא** רואה פיקסלים. הוא מקבל מ-`inspectApplicationState` (Tool) ייצוג מובנה: שם המסך שזוהה (`knownScreens` של ה-Connector), רשימת שדות/ערכים שנקראו (מ-UIA Accessibility Tree קודם כול, לא מ-OCR), ואם התוכן חדש/לא מזוהה - Vision Model מקבל את ה-screenshot לצורך זיהוי בלבד (לא לצורך "קליקים"). כל תוצאה נושאת `confidence`; מתחת לסף מוגדר הסוכן לא ממשיך לבד (ר' State Machine).
-
-## 7. איך נלמד Workflow מהדגמה (Training Mode)
-
-ר' פירוט מלא ב-`06-MVP-PLAN.md` (רכיב MVP #6) ובתיאור ה-Skill Format. בקצרה: `local-agent` מתעד **פעולות סמנטיות** (מסך→שדה→ערך→מקור→פעולה→תוצאה) דרך אותה שכבת Computer Use - לא הקלטת מקלדת/עכבר גולמית. ה-Orchestrator הופך רצף פעולות סמנטי ל-Workflow מוצע, המשתמש עורך, והתוצאה נשמרת כ-Skill ב-`packages/skills` (ובענן, ב-Supabase, לשימוש חוזר).
-
-## 8. סיכונים ארכיטקטוניים מרכזיים
-
-1. **שינוי ממשק בתוכנת היעד** (עדכון גרסה) שובר Connector - נדרש Validation אחרי כל פעולה + Recovery Strategy, לא רק "לפני".
-2. **Latency בין ענן ל-Local Agent** - כל Tool Call עובר רשת; Workflow ארוך (סגירה שנתית) חייב Checkpoint תכוף כדי שניתוק לא יאבד עבודה.
-3. **MFA/CAPTCHA** עוצרים אוטומציה מוחלטת - חובה Human-in-the-loop synchronous handoff (ר' State Machine, מצב `AwaitingHumanAuth`).
-4. **רישוי/תנאי שימוש** של התוכנות המקוריות מול אוטומציה - שאלה פתוחה, ר' `07-ASSUMPTIONS-OPEN-QUESTIONS.md`.
+1. **שינוי ממשק בתוכנת היעד** (עדכון גרסה) עדיין שובר את היכולת של ה-AI לזהות מסכים נכון - אין היום מנגנון Validation/Recovery ייעודי מעבר לביטחון-ה-AI-עצמו וללולאת ניסיון-חוזר על שגיאות רשת.
+2. **Latency מול xAI** - כל צעד שולח תמונה ומחכה לתשובה; משימות ארוכות (עד 40 צעדים) יכולות לקחת זמן משמעותי. יש retry אוטומטי על תקלות חולפות (`task-runner.ts`), אין עדיין caching/מאקרו לצעדים חוזרים (רעיון פתוח, לא ממומש).
+3. **MFA/CAPTCHA** עוצרים אוטומציה - אין today מצב ייעודי לזה מעבר ל-`action: "ask"` הכללי.
+4. **רישוי/תנאי שימוש** של התוכנות המקוריות מול אוטומציית Vision - שאלה פתוחה, ר' `07-ASSUMPTIONS-OPEN-QUESTIONS.md`.
+5. **אמינות הקלדה/קליק** - עיכובי הקלט המובנים של `nut-js` הוקטנו (ר' commit "Reduce nut-js's built-in per-input-event delay") לטובת מהירות; זה שינוי שעדיין דורש אימות מול תוכנות ישנות/איטיות בפועל.
+</content>

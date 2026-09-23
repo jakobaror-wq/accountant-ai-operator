@@ -1,59 +1,58 @@
 # Tool Registry - Accountant AI Operator
 
-## 1. עיקרון
+> **עדכון (2026-09-23):** מסמך זה שוכתב במלואו. ה-Tool Registry העסקי המתוכנן במקור (`readTrialBalance`, `prepareJournalEntries` וכו', עם Zod schemas ואכיפת אישור דטרמיניסטית נפרדת) **לא נבנה**. במקום זה, הכיוון שנבחר בפועל הוא Vision-first: ה-AI מקבל רק פעולות מחשב גולמיות (קליק/הקלדה/מקש), לא Tools ברמת עסקית. המסמך הזה מתאר את מה שקיים בפועל.
 
-ה-AI Orchestrator **אינו** מבצע לחיצות ישירות. הוא קורא אך ורק ל-Tools מוגדרים, כל אחד עם סכימת Zod לקלט ולפלט. השכבה הדטרמיניסטית (approval-engine) קובעת אילו Tools דורשים Approval Token תקף לפני ביצוע - זו לא החלטה של ה-AI.
+## 1. עקרון בפועל: פעולות מחשב גולמיות, לא Tools עסקיים
 
-## 2. מעטפת תוצאה אחידה (ToolResult) - חובה לכל Tool
+בניגוד לתכנון המקורי, ה-AI (xAI Grok) לא קורא ל-Tools מוגדרים ברמה עסקית. בכל צעד הוא מחזיר JSON יחיד עם שדה `action` שהוא **אחת מהפעולות הגולמיות הבאות בדיוק** (מוגדרות ב-`apps/desktop/src/ai/grok.ts`):
+
+| Action | קלט | הערה |
+|---|---|---|
+| `click` | `x`, `y`, `button?` | קליק בקואורדינטה (במרחב התמונה שנשלחה, מקונפס בחזרה לרזולוציה האמיתית ב-`task-runner.ts`) |
+| `double_click` | `x`, `y` | |
+| `type` | `text` | מקליד מחרוזת חופשית |
+| `type_credential` | `field: "username" \| "password"` | **פעולה סמלית** - לא מכילה את הערך עצמו. ר' סעיף 3 |
+| `key` | `key` (enter/tab/escape/backspace/delete/חצים/space) | |
+| `scroll` | `amount` (חיובי=למטה) | |
+| `wait` | `ms` | |
+| `ask` | `question` | עוצר, שואל את המשתמש, ממתין לתשובה, ממשיך עם התשובה בהיסטוריה |
+| `done` | `summary` | מסיים את המשימה - חייב להסביר גם כישלון, לא רק הצלחה |
+
+אין Tools ברמה עסקית (`readTrialBalance`, `exportReport`, `calculateDepreciation` וכו') - כל אלה נשארו רעיון בתכנון המקורי ולא מומשו. כל "פעולה עסקית" מתבצעת כרצף של פעולות המחשב הגולמיות האלה, לפי החלטת ה-AI צעד-אחר-צעד מתוך מה שהוא רואה בצילום המסך.
+
+## 2. מעטפת תשובה בפועל (לא ToolResult)
+
+כל תשובה מה-AI היא JSON יחיד (לא מעטפת `ToolResult` נפרדת לכל Tool):
 
 ```ts
-interface ToolResult<T = unknown> {
-  success: boolean;
-  data?: T;
-  evidence: EvidenceRef[];        // הפניות ל-screenshot/לוג, לא תוכן גולמי
-  screenshotReference?: string;   // מזהה קובץ מקומי/Storage, לא base64 בתוך ה-payload
-  warnings: string[];
-  errors: ToolError[];
-  confidence: number;             // 0-1
-  nextPossibleActions: string[];  // שמות Tools הגיוניים להצעה הבאה
+interface GrokStepResult {
+  reasoning: string;        // הסבר קצר
+  screenLabel: string;      // שם עקבי וקבוע למסך שזוהה
+  confidence: number;       // 0-1
+  requiresApproval: boolean;
+  action: ComputerActionRequest;  // אחת מהפעולות בטבלה למעלה
 }
-
-interface ToolError { code: string; message: string; recoverable: boolean }
-interface EvidenceRef { kind: "screenshot" | "log" | "file"; ref: string; capturedAt: string }
 ```
 
-## 3. רשימת Tools (מהמפרט המקורי) - סטטוס: **הגדרת ממשק בלבד, ללא מימוש בשלב 0**
+אין `evidence`/`screenshotReference` נפרדים בתשובה - הצילום עצמו לא חוזר בתשובת ה-AI (רק נשלח אליו). אין `nextPossibleActions`. ברירות מחדל בטוחות מיושמות בקוד (`requestNextAction` ב-`grok.ts`) אם המודל מחזיר `confidence`/`screenLabel`/`requiresApproval` חסרים או לא תקינים - למשל `confidence` חסר נחשב `0`, ו-`requiresApproval` חסר עבור פעולה שאינה `ask`/`done`/`type_credential` נחשב `true` (ברירת המחדל הבטוחה).
 
-| Tool | קלט (תמצית) | פלט (תמצית) | דורש Approval? |
-|---|---|---|---|
-| `inspectApplicationState` | connectorId, windowHandle? | screenName, fields[], confidence | לא |
-| `openApplication` | connectorId, credentialsRef (לא הסיסמה עצמה) | processHandle, success | לא (אך תלוי ב-authenticateApplication) |
-| `authenticateApplication` | connectorId, credentialsRef | `authenticationSuccessful: boolean` בלבד - **לעולם לא הסיסמה** | לא |
-| `selectClient` | connectorId, clientExternalId | selectedClientName, confirmed | לא |
-| `readTrialBalance` | connectorId, clientId, taxYear | accounts[], totals, balanced: boolean | לא |
-| `exportReport` | connectorId, reportType, params | fileRef | לא |
-| `importFile` | connectorId, fileRef, targetScreen | importSummary, rowsProcessed | לא (ייבוא לטיוטה) |
-| `calculateDepreciation` | assetsData, method, taxYear | depreciationEntries[], totalByAsset | לא (חישוב בלבד) |
-| `prepareJournalEntries` | sourceData, mappingRules | draftEntries[] (טיוטה בלבד) | לא (טיוטה, לא רישום) |
-| `compareBalances` | sourceA, sourceB, tolerance | diffs[], withinTolerance: boolean | לא |
-| `populateFinancialReport` | draftEntries, reportTemplate | populatedReportRef (טיוטה) | לא |
-| `createApprovalPackage` | runId | approvalPackageRef (ר' `05-DATA-MODEL.md`) | לא (יצירת המסמך עצמו) |
-| `executeApprovedActions` | approvalPackageId, approvalTokenSignature | executionResults[], auditEntryRefs[] | **כן - חובה** |
+## 3. `type_credential` - המנגנון היחיד שבאמת "לא נוגע" בסוד
 
-## 4. הרחבות נדרשות מעבר לרשימת המקור (זוהו תוך תכנון, מוצעות לדיון)
+זו הפעולה הקרובה ביותר בפועל לעיקרון "ה-AI לעולם לא מקבל סיסמה" מהתכנון המקורי. כשהמודל מזהה מסך התחברות ויש פרטי התחברות שמורים לתוכנה (`settings.ts`), הוא מחזיר `{"type":"type_credential","field":"username"|"password"}` - **בלי הערך עצמו**. ב-`task-runner.ts`, ממש לפני הביצוע בפועל (`executeAction`), הערך האמיתי נשלף מקומית מהאחסון המוצפן ומוקלד ישירות - הוא **לא** חוזר לתוך ה-JSON שנשמר ליומן הביקורת ולא נכנס להיסטוריה שנשלחת בחזרה ל-AI בצעד הבא (שם נשאר רק ה-action הסמלי).
 
-| Tool מוצע | למה נדרש |
-|---|---|
-| `detectSoftwareVersion` | לזהות שינוי גרסה לפני שמפעילים Recovery מיותר |
-| `requestClarification` | ערוץ מפורש לעצירה עם שאלה למשתמש (State Machine, `AwaitingClarification`) - לא רק "כישלון" |
-| `recordDecision` | כתיבה מפורשת ל-Decision Log (שאלה/נתונים/חלופות/בחירה/נימוק/ביטחון) - נפרד מ-Tool עסקי, כדי שכל החלטה תתועד גם אם ה-Tool עצמו הצליח |
-| `rollbackDraft` | ביטול טיוטה שהוכנה (לפני רישום סופי) בלי לגעת בנתונים אמיתיים בתוכנה |
-| `pairDevice` / `revokeDevice` | ניהול Device Pairing מפורש כ-Tool (לא רק תשתית) |
+אם אין פרטי התחברות שמורים לתוכנה, המודל מונחה (ב-system prompt) לא להשתמש ב-`type_credential` בכלל אלא לשאול (`ask`) - ואם בכל זאת ינסה, הקוד עוצר עם שגיאה ברורה במקום להקליד ערך ריק/שגוי.
 
-## 5. אכיפת אישור (Approval Enforcement) - איפה זה חי בפועל
+## 4. אכיפת אישור (Approval Enforcement) - איפה זה **באמת** חי, ומה המגבלה
 
-`approvalEngine.canExecute(toolName, context): boolean` נבדק **בתוך** ה-Tool Runner עצמו לפני קריאה בפועל ל-Local Agent - שכבה נפרדת מה-Orchestrator, כך שגם פרומפט/הזיה שגויה של ה-AI לא יכולה לעקוף את הדרישה לאישור על `executeApprovedActions` ופעולות בלתי הפיכות עתידיות דומות.
+בניגוד לתכנון המקורי (`approvalEngine.canExecute` כשכבה דטרמיניסטית נפרדת שה-AI לא יכול לעקוף): **בפועל, `requiresApproval` נקבע ע"י המודל עצמו**, לפי כללים מפורטים ב-system prompt (`ai/grok.ts`):
 
-## 6. סטטוס מימוש
+- **`false` (חופשי)**: שאיבת/קריאת מידע - ניווט, פתיחת מסכים לצפייה, חיפוש, גלילה, ייצוא קבצים - כל עוד לא משתנה נתון קיים בתוכנה. גם `ask`, `done`, ו-`type_credential` תמיד `false`.
+- **`true` (חובה אישור)**: כל פעולה שמשנה מידע בתוך התוכנה - שמירה, מחיקה, הוספה/עריכת רשומה, אישור/פרסום מסמך, תשלום.
+- אם לא ברור - ברירת המחדל היא `true` (הבטוחה).
 
-זהו Registry של **חוזה (contract)** בלבד לשלב 0. אין עדיין מימוש Zod בפועל, ואין Connector אמיתי מאחורי אף Tool. המימוש הראשון (שלב 2-3 בתוכנית) ירוץ מול תוכנת ה-Demo (ר' `06-MVP-PLAN.md`), לא מול תוכנה אמיתית.
+**זו לא אכיפה דטרמיניסטית שה-AI לא יכול "לעקוף"** - זו הנחיה בפרומפט, עם רק ברירת מחדל בטוחה בקוד למקרה שהשדה עצמו חסר/פגום בתשובה (לא למקרה שהמודל "בחר" `false` בטעות על פעולה שבאמת דורשת אישור). זה פער אמיתי מול התכנון המקורי, לא רק שינוי ניסוח - שווה לזכור אותו בבואנו להחליט אם צריך שכבת אכיפה נפרדת אמיתית בעתיד.
+
+## 5. סטטוס מימוש
+
+הפעולות הגולמיות (טבלה בסעיף 1) ממומשות ופעילות במלואן, כולל אישור/דחייה אנושי בפועל (IPC: `aiop:approve-action`/`aiop:reject-action`), שאלה/תשובה (`aiop:answer-question`), ותור צעדים עם היסטוריה חתוכה ל-20 צעדים אחרונים (למניעת גדילת prompt בלתי מוגבלת). אין היום שום Tool עסקי ברמה גבוהה יותר - כל "יכולת" חדשה (למשל "הכן דוח מאזן") היא בפועל רק משימת טקסט חופשית שה-AI מפרק בעצמו לרצף פעולות מחשב גולמיות, ולא Tool ייעודי חדש שצריך לפתח.
+</content>

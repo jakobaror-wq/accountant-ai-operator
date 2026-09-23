@@ -1,5 +1,7 @@
 # MVP Plan - Accountant AI Operator
 
+> **מסמך היסטורי:** תוכנית ה-MVP הזו (`apps/local-agent`, תוכנת Demo פנימית, Training Mode, Workflow Engine, Approval Package מלא) שיקפה את הכיוון הארכיטקטוני **המקורי** (ענן + Local Agent נפרד), שהוחלף לגמרי במהלך הפיתוח בפועל. המערכת הקיימת היום (תהליך Electron יחיד, Vision-first, ללא Supabase) בנויה אחרת לגמרי - ר' `01-ARCHITECTURE.md`, `04-TOOL-REGISTRY.md`, `05-DATA-MODEL.md` למצב בפועל. מסמך זה נשמר כרפרנס היסטורי לחשיבה המקורית, לא כתוכנית עבודה פעילה.
+
 ## 1. רשימת רכיבי MVP (מהמפרט המקורי - מלא, ללא צמצום)
 
 1. אפליקציה מרכזית (`apps/web`).

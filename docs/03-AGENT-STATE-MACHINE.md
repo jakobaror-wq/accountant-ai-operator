@@ -1,85 +1,56 @@
 # Agent State Machine - Accountant AI Operator
 
-## 1. עקרונות מחייבים (מהמפרט המקורי)
+> **עדכון (2026-09-23):** מסמך זה שוכתב במלואו. הלולאה בפועל (`apps/desktop/src/task-runner.ts`) הרבה יותר פשוטה מה-State Machine המפורט שתוכנן במקור (Draft/Planning/AwaitingClarification/ReadyForApproval/וכו') - זו לולאת-צעדים שטוחה אחת, לא מכונת-מצבים מרובדת. עקרונות ה-Resumability/Idempotency/Recovery מהתכנון המקורי נשמרו כמטרה, וחלקם **ממומשים בפועל בצורה פשוטה יותר** מהמתואר במקור - מפורט למטה. הגרסה הקודמת נשמרת בהיסטוריית ה-git לרפרנס.
 
-כל Workflow חייב להיות: Resumable, Idempotent, ניתן לעצירה, ניתן לביטול ככל האפשר, עם Checkpoint אחרי כל שלב, עמיד לשינויי ממשק, ועם Validation אחרי כל פעולה.
+## 1. העיקרון בפועל: לולאת-צעדים שטוחה, לא מכונת-מצבים מרובדת
 
-## 2. מצבי-על (Run-level States)
+אין `Draft`/`Planning`/`ReadyForApproval`/`FinalizingExecution` וכו' כמצבי-על נפרדים. יש **ריצה אחת** (`Run`) שעוברת בלולאה `for (step = 1; step <= MAX_STEPS=40; step++)`, כשבכל צעד מתבצע תמיד אותו רצף: צילום מסך → קריאה ל-AI → (אם צריך) עצירה לאישור/שאלה → ביצוע → checkpoint. אין הבחנה בין "שלב תכנון" ל"שלב ביצוע" - כל צעד הוא גם וגם, מוחלט מחדש ע"י ה-AI על סמך מה שהוא רואה באותו רגע.
 
-```
-Draft ──► Planning ──► AwaitingClarification ──► Planning
-             │                                       │
-             ▼                                       │
-          Executing ◄────────────────────────────────┘
-             │  │
-             │  ├──► AwaitingHumanAuth (MFA/CAPTCHA) ──► Executing
-             │  │
-             │  ├──► Paused (משתמש/Take Control) ──► Executing / Cancelled
-             │  │
-             │  ├──► Blocked (ביטחון נמוך/שגיאה לא ניתנת להתאוששות) ──► AwaitingClarification
-             │  │
-             ▼  ▼
-      ReadyForApproval ──► AwaitingApproval ──► (Approved) ──► FinalizingExecution ──► Completed
-                                 │
-                                 ├──► (Rejected/Partial) ──► Executing (תיקון) / Cancelled
-                                 │
-                                 └──► (RequestMoreCheck) ──► Executing (בדיקה נוספת בלבד, ללא פעולה סופית)
+## 2. מצבי ריצה בפועל (`RunRecord.status`)
 
-כל מצב ──► Cancelled (בכל שלב, אם ניתן לביטול בטוח)
-כל מצב ──► Failed (שגיאה בלתי ניתנת להתאוששות, נשמר Checkpoint אחרון + Evidence)
+```ts
+type RunStatus = "in-progress" | "done" | "stopped" | "rejected" | "error" | "max-steps-reached";
 ```
 
-הבחנה קריטית: **Executing** מבצע רק פעולות שאינן דורשות אישור (קריאה, ניתוח, חישוב, הכנת טיוטה - ר' רשימה במפרט המקור). שום מעבר לא מוביל מ-Executing ישירות ל-Completed בלי לעבור דרך AwaitingApproval אם קיימת ולו פעולה אחת בלתי הפיכה בתוכנית.
-
-## 3. תת-State Machine לכל צעד (Step-level, בתוך Executing)
-
 ```
-StepPending ──► Locating (מאתר מסך/שדה - ר' סעיף 5) ──► Acting ──► Verifying
-                                                                       │
-                                          ┌────────────────────────────┤
-                                          ▼                            ▼
-                                   StepSucceeded              StepFailed ──► Recovery (סעיף 5)
+in-progress ──(action:"done")──────────────► done
+in-progress ──(עצירה ידנית מה-UI)──────────► stopped
+in-progress ──(המשתמש דוחה פעולה שדרשה אישור)─► rejected
+in-progress ──(executeAction זורק/כשל ברשת שלא ניתן ל-retry)─► error
+in-progress ──(step > MAX_STEPS)───────────► max-steps-reached
 ```
 
-כל מעבר ל-`StepSucceeded` יוצר **Checkpoint** (ר' סעיף 4) לפני שהצעד הבא מתחיל.
+זהו כל מרחב המצבים בפועל - אין `AwaitingHumanAuth` (MFA/CAPTCHA) כמצב ייעודי, אין `Blocked` נפרד, אין `Paused`/`Take Control` כמצבים פורמליים. תרחישים כאלה מטופלים היום דרך `action:"ask"` הכללי (ר' סעיף 4) או עצירה ידנית (`stopped`) - לא מצב ייעודי לכל אחד.
 
-## 4. Checkpoint - מה נשמר
+## 3. תת-לולאה לכל צעד (בתוך `in-progress`)
 
-בכל Checkpoint (ב-Supabase, ר' `05-DATA-MODEL.md` טבלת `workflow_step`):
-- מזהה Run + מספר סידורי של הצעד.
-- State המלא הנדרש להמשך (תוצאות הצעדים הקודמים הרלוונטיות להחלטה הבאה).
-- Evidence שנאסף (הפניה, לא את הקובץ עצמו בטבלה).
-- Confidence שדווח על ידי הצעד.
-- Hash של ה-Tool Call המדויק שבוצע (לאימות Idempotency בהרצה חוזרת).
+```
+captureScreenshot() ──► requestNextActionWithRetry() ──► [ask? / requiresApproval? עוצר וממתין] ──► executeAction() ──► checkpoint()
+```
 
-**Resume**: הרצה מחדש מתחילה מה-Checkpoint האחרון, בודקת (`compareBalances`/`inspectApplicationState`) שהמצב בפועל עדיין תואם למה שה-Checkpoint מניח, ורק אז ממשיכה. אם לא תואם - Blocked, לא ניחוש.
+- `requestNextActionWithRetry` (ר' `01-ARCHITECTURE.md` §3) מנסה שוב עד `MAX_AI_RETRIES=2` פעמים, `AI_RETRY_DELAY_MS=1500`, **רק** על שגיאות חולפות (רשת/429/5xx) - שגיאת מפתח API (400/401) נכשלת מיד בלי retry.
+- אין תת-State Machine נפרדת ל-`Locating`/`Acting`/`Verifying` - `executeAction` פשוט מבצע את הפעולה (קליק/הקלדה/מקש/גלילה) בלי שלב "אימות" נפרד אחריה; ה"אימות" היחיד שקיים הוא שהצעד **הבא** בלולאה מתחיל בצילום מסך חדש, שה-AI עצמו קורא ומחליט על סמכו אם הפעולה הקודמת הצליחה.
 
-**Idempotency**: לפני כל פעולת כתיבה (אפילו טיוטה) הסוכן בודק אם התוצאה המבוקשת כבר קיימת (למשל פקודת יומן זהה כבר הוכנה) לפי Hash של הפעולה+קלט, כדי שהרצה כפולה לא תיצור כפילויות.
+## 4. Checkpoint - מה נשמר בפועל, ומתי
 
-## 5. Recovery Strategy (מהמפרט המקורי, מחייב)
+בכל צעד שמסתיים בהצלחה (`outcome:"executed"`), נקראת `checkpoint()` שקוראת ל-`run-history.saveRun(...)` - כותבת את כל ה-`RunRecord` (כולל כל ה-`steps` עד כה) לקובץ JSON יחיד באופן **upsert** (לא append) - ר' `05-DATA-MODEL.md` §3 למבנה המדויק. אין Hash של ה-Tool Call לצורך Idempotency check - הקובץ כולו נכתב מחדש בכל checkpoint, אין מנגנון ייעודי לזהות "פעולה כפולה" מעבר לכך שכל `RunStepRecord` כבר מתועד עם מספר סידורי.
 
-כאשר כפתור/שדה לא נמצא:
+## 5. Resume - מה ממומש בפועל, ומה לא
 
-1. נסה Accessibility Tree (UIA).
-2. נסה מזהה סמנטי (Selector יציב שהוגדר ב-Connector).
-3. נסה OCR/Vision (Fallback בלבד).
-4. בדוק אם המסך השתנה (השווה ל-`knownScreens` - אולי דיאלוג/עדכון גרסה).
-5. **לעולם אל תלחץ לפי קואורדינטות בלבד ללא אימות.**
-6. אם רמת הביטחון עדיין נמוכה מסף מוגדר - עצור (`Blocked`).
-7. הצג למשתמש את הבעיה + צילום המסך הרלוונטי (Evidence), עבור ל-`AwaitingClarification`.
+**מה שכן קיים בפועל:** `findIncompleteRun(connectorId)` (`run-history.ts`) מוצא ריצה שנשארה `in-progress` - סימן שהאפליקציה נסגרה/קרסה באמצע. `main.ts` מציע למשתמש להמשיך אותה (`resumeFrom`), ו-`task-runner.ts` ממשיך מהצעד הבא בלי לחזור על צעדים שכבר תועדו כ-`executed`.
 
-## 6. סף ביטחון (Confidence Threshold) - מדיניות
+**מה שאין:** אין בדיקה אוטומטית שהמצב בפועל בתוכנה עדיין תואם למה שה-Checkpoint האחרון מניח (`compareBalances`/`inspectApplicationState` מהתכנון המקורי לא קיימים) - ה-Resume פשוט ממשיך לצלם ולשאול את ה-AI מחדש מהמסך הנוכחי, וה-AI עצמו (על סמך ההיסטוריה שמוזנת לו, עד 20 צעדים אחרונים - ר' `04-TOOL-REGISTRY.md` §5) מחליט מה לעשות אם משהו לא תואם. זו הגנה חלשה יותר מהמתוכנן במקור, אבל קיימת בפועל.
 
-- כל `ToolResult` נושא `confidence` (0-1).
-- מתחת לסף לכל סוג פעולה (לקריאה - סף נמוך יותר מספיק; לפעולת כתיבה/חישוב - סף גבוה) הסוכן לא ממשיך אוטומטית.
-- הסף המדויק לכל סוג Tool ייקבע אמפירית מול תוכנת ה-Demo ב-MVP ולא מנוחש כאן (ר' שאלה פתוחה ב-07).
+## 6. סף ביטחון (Confidence Threshold)
 
-## 7. מצב `AwaitingHumanAuth` (MFA/CAPTCHA)
+`CONFIDENCE_THRESHOLD = 0.95` ב-`ai/grok.ts` - סף יחיד, לא מדורג לפי סוג פעולה כמו שתוכנן במקור. זו הנחיה ב-system prompt למודל עצמו ("אם הביטחון שלך נמוך מ-0.95, בחר `ask` במקום לנחש") - **לא בדיקה דטרמיניסטית בקוד** שחוסמת פעולה אם `confidence` המוחזר נמוך. פירוט מלא ב-`04-TOOL-REGISTRY.md` §2 ו-§4.
 
-Local Agent מזהה שהתוכנה מבקשת MFA/CAPTCHA (לא Tool רגיל שנכשל - סוג ידוע), עוצר את ה-Run במלואו (לא רק את הצעד), שולח התראה למשתמש, וממתין ל-Signal "השלמתי ידנית" לפני שהוא ממשיך בדיוק מאותה נקודה (לא מהתחלה).
+## 7. `ask` - התחליף בפועל ל-`AwaitingHumanAuth`/`AwaitingClarification`
 
-## 8. עצירה/ביטול (Pause/Stop/Take Control)
+אין מצב ייעודי ל-MFA/CAPTCHA או לחוסר-ודאות כללי. כשה-AI נתקל בכל אחד מהמצבים האלה, הוא בוחר `action:"ask"` עם שאלה חופשית בטקסט. הלולאה עוצרת (`onUpdate("awaiting-answer")`), ממתינה לתשובת המשתמש (`aiop:answer-question` IPC), ומוסיפה את התשובה להיסטוריה לפני שהיא ממשיכה מהצעד הבא - **מאותו מקום בדיוק**, לא מהתחלה. זה מכסה בפועל גם MFA/CAPTCHA וגם חוסר-ודאות כללי, בלי הבחנה בין הסוגים.
 
-- **Pause**: עוצר לפני הצעד הבא (לא באמצע פעולה פעילה), שומר Checkpoint, ניתן ל-Resume.
-- **Take Control**: המשתמש משתלט על ה-Local Agent (Desktop/דפדפן) לביצוע ידני; הסוכן עובר ל-`Paused` ומחכה ל"החזר שליטה", ואז מריץ `inspectApplicationState` לפני שהוא ממשיך (לא מניח שהמצב לא השתנה).
-- **Cancel**: מבוטל רק אם עדיין לא בוצעה פעולה בלתי הפיכה; אם כן - מוצג למשתמש מה כבר בוצע ולא ניתן לביטול, ומוצעת פעולת תיקון ידנית/Rollback אם קיימת.
+## 8. עצירה/ביטול בפועל
+
+- **עצירה ידנית**: `shouldStop()` נבדק בתחילת כל צעד - עוצר **לפני** הצעד הבא, לא באמצע פעולה בודדת שכבר החלה (קליק/הקלדה). סטטוס הופך ל-`stopped`.
+- **דחיית אישור**: אם המשתמש דוחה פעולה שדרשה אישור, הריצה מסתיימת מיד עם `status:"rejected"` - **אין** המשך אוטומטי לתיקון/ניסיון חלופי; זה סוף הריצה, לא מעבר למצב ביניים.
+- **אין "Take Control"** (השתלטות ידנית על העכבר/מקלדת תוך כדי ריצה) כמצב פורמלי - המשתמש יכול לעצור את הריצה ואז לפעול ידנית בתוכנה, אבל אין מנגנון ייעודי ב-state machine לכך.
