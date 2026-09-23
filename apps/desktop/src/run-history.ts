@@ -42,12 +42,19 @@ function loadCache(): Map<string, StoredRunRecord> {
   return cache;
 }
 
+/** מזהה ריצה נגזר מ-startedAt - פונקציה נפרדת כדי ש-task-runner.ts יוכל לחשב
+ * מראש את אותו מזהה בדיוק (למשל בתור sourceRunId של מאקרו, ר' macros.ts),
+ * בלי לשכפל את הלוגיקה. */
+export function runIdFor(startedAt: string): string {
+  return startedAt.replace(/[:.]/g, "-");
+}
+
 /**
  * "חבילת אישור" מינימלית - סיכום מקומי ותמידי של כל ריצה (מה נעשה, מה אושר/נדחה,
  * איך הסתיים), נשמר כקובץ JSON אחד לריצה בתיקיית ה-userData - לעולם לא בענן.
  */
 export function saveRun(run: RunRecord): StoredRunRecord {
-  const id = run.startedAt.replace(/[:.]/g, "-");
+  const id = runIdFor(run.startedAt);
   const stored: StoredRunRecord = { ...run, id };
   fs.writeFileSync(path.join(runsDir(), `${id}.json`), JSON.stringify(stored, null, 2), "utf-8");
   loadCache().set(id, stored);

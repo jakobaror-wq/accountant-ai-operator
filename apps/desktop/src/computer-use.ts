@@ -1,4 +1,4 @@
-import { desktopCapturer, screen } from "electron";
+import { desktopCapturer, nativeImage, screen } from "electron";
 import { mouse, keyboard, Point, Button, Key } from "@nut-tree-fork/nut-js";
 
 /**
@@ -73,6 +73,31 @@ export async function captureScreenshot(): Promise<ScreenshotResult> {
     realWidth: width,
     realHeight: height,
   };
+}
+
+/**
+ * תמונה זעירה (64x48) שנגזרת מצילום מסך קיים - לא צילום נפרד - לשימוש
+ * ב-macros.ts: השוואת-דמיון בין המסך החי לבין מה שנצפה בהקלטת מאקרו קודמת.
+ * קטנה בכוונה - הרזולוציה המלאה לא נדרשת בשביל "האם זה בערך אותו מסך",
+ * ושומרת את macros.json קטן (referenceThumbnail אחד לכל צעד מאקרו).
+ */
+export function deriveComparisonThumbnail(base64Png: string): string {
+  const small = nativeImage.createFromBuffer(Buffer.from(base64Png, "base64")).resize({ width: 64, height: 48 });
+  return small.toPNG().toString("base64");
+}
+
+/**
+ * הפרש ממוצע-מוחלט לפי בית, מנורמל ל-0..1 (0=זהה, 1=הפוך לגמרי). שתי
+ * תמונות בגדלים שונים (למשל שידור-חוזר על מסך שממש שונה) נחשבות שונות
+ * לגמרי (1) בלי לנסות להשוות פיקסל-לפיקסל בין מבנים לא תואמים.
+ */
+export function bitmapDiffScore(aBase64Png: string, bBase64Png: string): number {
+  const a = nativeImage.createFromBuffer(Buffer.from(aBase64Png, "base64")).toBitmap();
+  const b = nativeImage.createFromBuffer(Buffer.from(bBase64Png, "base64")).toBitmap();
+  if (a.length === 0 || a.length !== b.length) return 1;
+  let sum = 0;
+  for (let i = 0; i < a.length; i++) sum += Math.abs(a[i] - b[i]);
+  return sum / (a.length * 255);
 }
 
 export type ComputerAction =

@@ -1,6 +1,8 @@
-import { captureScreenshot, executeAction } from "./computer-use";
+import { captureScreenshot, executeAction, deriveComparisonThumbnail, bitmapDiffScore } from "./computer-use";
 import { requestNextAction, CONFIDENCE_THRESHOLD, type HistoryEntry, type GrokStepResult } from "./ai/grok";
 import { getConnectorCredentials } from "./settings";
+import { getMacro, saveMacro, recordMacroReplay, recordMacroFallback, MACRO_REPLAY_ENABLED, type MacroStep } from "./macros";
+import { runIdFor } from "./run-history";
 
 export interface RunStepRecord {
   step: number;
@@ -60,6 +62,15 @@ const MAX_STEPS = 40;
 // אימות בפועל שתוכנות איטיות/ישנות עדיין מספיקות "לעכל" כל שינוי מסך לפני
 // שהצעד הבא מצלם ומחליט מחדש.
 const STEP_PAUSE_MS = 250;
+
+/**
+ * סף התאמה לשידור-חוזר של מאקרו: bitmapDiffScore (0=זהה, 1=הפוך לגמרי) בין
+ * תמונונת המסך החי לבין מה שנצפה בהקלטה. ערך שמרני בכוונה - עדיף ליפול
+ * בחזרה ל-AI (תמיד בטוח, רק מבטל את יתרון המהירות לצעד הזה) מאשר "להתאים"
+ * בטעות בין שני מסכים שרק נראים דומים ולשחזר קליק במקום הלא נכון. לא נבדק
+ * בפועל מול תוכנה אמיתית - ר' docs/09-COMPUTER-USE-AGENT.md.
+ */
+const MACRO_MATCH_THRESHOLD = 0.05;
 
 /**
  * שגיאות רשת (fetch failed וכו') מסתירות את הסיבה האמיתית מאחורי err.cause
@@ -142,6 +153,17 @@ export async function runComputerUseTask(params: {
   const startedAt = params.resumeFrom?.startedAt ?? new Date().toISOString();
   const startStep = steps.length + 1;
 
+  // מאקרו: רק לריצה טרייה (לא resumeFrom - ר' הערה ב-macros.ts/05-DATA-MODEL.md
+  // למה ריצה שממשיכה קריסה לא מתאימה כמקור/יעד לשידור-חוזר). macroActive
+  // הופך ל-false לצמיתות ברגע הראשון שצעד לא תואם - לעולם לא מנסים "לחזור"
+  // לשידור חוזר באמצע אותה ריצה אחרי שהיא נפלה ל-AI פעם אחת.
+  const macro = params.resumeFrom || !MACRO_REPLAY_ENABLED ? null : getMacro(params.connectorId, params.task);
+  let macroActive = Boolean(macro);
+  let macroCursor = 0;
+  let resolutionChecked = false;
+  let anyStepUsedAi = false;
+  const executedMacroSteps: MacroStep[] = [];
+
   function finish(status: RunRecord["status"], summary?: string): void {
     params.onUpdate({
       type: "run-summary",
@@ -180,34 +202,80 @@ export async function runComputerUseTask(params: {
     }
     params.onUpdate({ type: "screenshot", step, base64Png: screenshot.base64Png });
 
-    let next;
-    try {
-      next = await requestNextActionWithRetry({
-        apiKey: params.apiKey,
-        task: params.task,
-        screenshotBase64: screenshot.base64Png,
-        screenWidth: screenshot.width,
-        screenHeight: screenshot.height,
-        history,
-        knownScreens: params.knownScreens,
-        hasSavedCredentials: Boolean(getConnectorCredentials(params.connectorId)),
-      });
-    } catch (err) {
-      const message = `ai-request-failed: ${describeError(err)}`;
-      steps.push({ step, timestamp: new Date().toISOString(), outcome: "failed", error: message });
-      params.onUpdate({ type: "error", step, message });
-      finish("error", message);
-      return;
+    // תמונונת-השוואה נגזרת פעם אחת לכל צעד, בין אם יש מאקרו פעיל (משמשת
+    // מייד להשוואת-דמיון) ובין אם לא (נשמרת ל-executedMacroSteps, למקרה
+    // שהריצה הזו תזכה להפוך בעצמה למאקרו בסיום, ר' "done" למטה).
+    const stepThumbnail = deriveComparisonThumbnail(screenshot.base64Png);
+
+    if (macro && !resolutionChecked) {
+      // בדיקה חד-פעמית (לא לפי macroCursor - הוא לא מתקדם אם ההתאמה נכשלת
+      // כבר בצעד הראשון, מה שהיה גורם לבדיקה הזו לרוץ מחדש כל צעד): שידור-
+      // חוזר מסורב לגמרי אם הרזולוציה החיה לא תואמת בדיוק את זו שבזמן
+      // ההקלטה - קואורדינטות אבסולוטיות שנשמרו במאקרו לא בטוחות לפרש נכון
+      // על מסך/DPI שונה (ר' docs/05-DATA-MODEL.md).
+      resolutionChecked = true;
+      if (
+        screenshot.realWidth !== macro.recordedResolution.width ||
+        screenshot.realHeight !== macro.recordedResolution.height
+      ) {
+        macroActive = false;
+      }
+    }
+
+    let next: GrokStepResult | undefined;
+    let usedMacro = false;
+
+    if (macroActive && macro && macroCursor < macro.steps.length) {
+      const macroStep = macro.steps[macroCursor];
+      if (bitmapDiffScore(stepThumbnail, macroStep.referenceThumbnail) <= MACRO_MATCH_THRESHOLD) {
+        next = {
+          reasoning: macroStep.reasoning,
+          screenLabel: macroStep.screenLabel,
+          confidence: 1,
+          requiresApproval: macroStep.requiresApproval,
+          action: macroStep.action,
+        };
+        usedMacro = true;
+        macroCursor += 1;
+        recordMacroReplay(params.connectorId, params.task);
+      } else {
+        // נפילה קבועה ל-AI לשאר הריצה הזו - לא מנסים "למצוא איפה אנחנו"
+        // מחדש באמצע רצף שסטה; זה הרבה יותר מסוכן מלוותר על האופטימיזציה.
+        macroActive = false;
+        recordMacroFallback(params.connectorId, params.task);
+      }
+    }
+
+    if (!next) {
+      anyStepUsedAi = true;
+      try {
+        next = await requestNextActionWithRetry({
+          apiKey: params.apiKey,
+          task: params.task,
+          screenshotBase64: screenshot.base64Png,
+          screenWidth: screenshot.width,
+          screenHeight: screenshot.height,
+          history,
+          knownScreens: params.knownScreens,
+          hasSavedCredentials: Boolean(getConnectorCredentials(params.connectorId)),
+        });
+      } catch (err) {
+        const message = `ai-request-failed: ${describeError(err)}`;
+        steps.push({ step, timestamp: new Date().toISOString(), outcome: "failed", error: message });
+        params.onUpdate({ type: "error", step, message });
+        finish("error", message);
+        return;
+      }
     }
 
     // המודל רואה צילום מסך מוקטן (ר' computer-use.ts) ומחזיר קואורדינטות באותו
     // מרחב מוקטן - צריך לקנפס אותן בחזרה לרזולוציה האמיתית לפני כל שימוש
     // (תצוגה, אישור, ביצוע בפועל), כדי שהקליק יפגע במקום הנכון על המסך.
-    next.action = scaleActionToRealScreen(
-      next.action,
-      screenshot.realWidth / screenshot.width,
-      screenshot.realHeight / screenshot.height,
-    );
+    // פעולה שמקורה במאקרו כבר במרחב-המסך-האמיתי (כך MacroStep.action נשמר
+    // מלכתחילה, ר' למטה) - קנפוס נוסף עליה יכפיל את הסקיילינג בטעות.
+    next.action = usedMacro
+      ? next.action
+      : scaleActionToRealScreen(next.action, screenshot.realWidth / screenshot.width, screenshot.realHeight / screenshot.height);
 
     params.onUpdate({
       type: "action",
@@ -229,6 +297,21 @@ export async function runComputerUseTask(params: {
         requiresApproval: false,
         outcome: "done",
       });
+      // לומדים מאקרו רק מריצה טרייה (לא resumeFrom - ר' הערה למעלה) שהסתיימה
+      // ב-done אמיתי, בלי אף צעד "ask" (לא דטרמיניסטי מספיק כדי לשדר חוזר -
+      // ר' macros.ts), ועם לפחות פעולה אחת בפועל. אם המאקרו הקיים כבר כיסה
+      // 100% מהריצה בלי אף נפילה ל-AI - אין מה ללמוד מחדש, שומרים על אותו קובץ.
+      const hasAskStep = steps.some((s) => s.outcome === "asked");
+      const fullyReplayedExisting = Boolean(macro) && !anyStepUsedAi;
+      if (!params.resumeFrom && !hasAskStep && !fullyReplayedExisting && executedMacroSteps.length > 0) {
+        saveMacro(
+          params.connectorId,
+          params.task,
+          executedMacroSteps,
+          { width: screenshot.realWidth, height: screenshot.realHeight },
+          runIdFor(startedAt),
+        );
+      }
       params.onUpdate({ type: "done", summary: next.action.summary });
       finish("done", next.action.summary);
       return;
@@ -367,6 +450,16 @@ export async function runComputerUseTask(params: {
       outcome: "executed",
     });
     checkpoint();
+
+    // נאסף בכל צעד שהצליח (גם כשלא היה מאקרו פעיל) - אם הריצה הזו עצמה
+    // תסתיים ב-done תקין, זה מה ש-saveMacro ישמור כמאקרו חדש/מעודכן.
+    executedMacroSteps.push({
+      screenLabel: next.screenLabel,
+      referenceThumbnail: stepThumbnail,
+      reasoning: next.reasoning,
+      action: next.action,
+      requiresApproval: next.requiresApproval,
+    });
 
     history.push({ reasoning: next.reasoning, action: next.action });
     await new Promise((resolve) => setTimeout(resolve, STEP_PAUSE_MS));
