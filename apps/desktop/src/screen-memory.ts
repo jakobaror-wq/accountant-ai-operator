@@ -22,23 +22,42 @@ function screensFile(connectorId: string): string {
   return path.join(dir, "screens.json");
 }
 
-export function getLearnedScreens(connectorId: string): LearnedScreen[] {
+/**
+ * קאש בזיכרון, לוקאלי-לפי-connector - recordScreen נקרא בכל אירוע "action"
+ * (עד 40 פעם למשימה, ר' task-runner.ts) והיה קורא+כותב את הקובץ המלא בכל
+ * פעם על אותו תהליך שגם מצלם מסך/מזיז עכבר. בניגוד ל-run-history.ts (שיש לו
+ * listRuns שצריך לראות הכול, ולכן קאש-eager של כל התיקייה), כאן אין פעולת
+ * "הכול" - הגישה תמיד לפי connectorId בודד, אז קאש עצל (נבנה רק לפי צורך,
+ * connector אחד בכל פעם) הוא הצורה הנכונה.
+ */
+const cache = new Map<string, LearnedScreen[]>();
+
+function loadConnectorScreens(connectorId: string): LearnedScreen[] {
+  const cached = cache.get(connectorId);
+  if (cached) return cached;
+  let loaded: LearnedScreen[];
   try {
-    return JSON.parse(fs.readFileSync(screensFile(connectorId), "utf-8")) as LearnedScreen[];
+    loaded = JSON.parse(fs.readFileSync(screensFile(connectorId), "utf-8")) as LearnedScreen[];
   } catch {
-    return [];
+    loaded = [];
   }
+  cache.set(connectorId, loaded);
+  return loaded;
+}
+
+export function getLearnedScreens(connectorId: string): LearnedScreen[] {
+  return loadConnectorScreens(connectorId);
 }
 
 export function recordScreen(connectorId: string, label: string, reasoning: string): void {
-  const screens = getLearnedScreens(connectorId);
+  const current = loadConnectorScreens(connectorId);
   const now = new Date().toISOString();
-  const existing = screens.find((s) => s.label === label);
-  if (existing) {
-    existing.timesSeen += 1;
-    existing.lastSeenAt = now;
-  } else {
-    screens.push({ label, timesSeen: 1, firstSeenAt: now, lastSeenAt: now, exampleReasoning: reasoning });
-  }
-  fs.writeFileSync(screensFile(connectorId), JSON.stringify(screens, null, 2), "utf-8");
+  const existing = current.find((s) => s.label === label);
+  const updated = existing
+    ? current.map((s) => (s.label === label ? { ...s, timesSeen: s.timesSeen + 1, lastSeenAt: now } : s))
+    : [...current, { label, timesSeen: 1, firstSeenAt: now, lastSeenAt: now, exampleReasoning: reasoning }];
+  // כותבים לדיסק לפני עדכון הקאש, כדי שכשל כתיבה לעולם לא ישאיר את הקאש
+  // "קדימה" ממה שבאמת נשמר בפועל.
+  fs.writeFileSync(screensFile(connectorId), JSON.stringify(updated, null, 2), "utf-8");
+  cache.set(connectorId, updated);
 }
