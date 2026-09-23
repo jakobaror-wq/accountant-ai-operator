@@ -48,8 +48,14 @@ export async function captureScreenshot(): Promise<ScreenshotResult> {
     types: ["screen"],
     thumbnailSize: { width, height },
   });
-  const source = sources[0];
-  if (!source) throw new Error("no-screen-source");
+  if (sources.length === 0) throw new Error("no-screen-source");
+  // desktopCapturer.getSources() לא מבטיח שה-source הראשון הוא המסך הראשי -
+  // בהגדרת שני מסכים (נפוץ אצל רואי חשבון) זה עלול לצלם מסך אחד בזמן
+  // שהקואורדינטות מחושבות לפי הרזולוציה של מסך אחר לגמרי, מה שיזיז כל קליק
+  // למקום שגוי. מתאימים לפי display_id של המסך הראשי בפועל; אם הפלטפורמה לא
+  // ממלאת display_id באופן אמין - נופלים חזרה לראשון, כמו קודם.
+  const source =
+    sources.find((s) => s.display_id === String(primaryDisplay.id)) ?? sources[0];
 
   const fullImage = source.thumbnail;
   const longestSide = Math.max(width, height);

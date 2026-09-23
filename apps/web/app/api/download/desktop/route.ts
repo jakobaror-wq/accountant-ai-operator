@@ -16,16 +16,25 @@ const LATEST_RELEASE_API_URL =
 export const revalidate = 300;
 
 export async function GET() {
-  const res = await fetch(LATEST_RELEASE_API_URL, {
-    headers: { Accept: "application/vnd.github+json", "User-Agent": "accountant-ai-operator" },
-    next: { revalidate: 300 },
-  });
+  let release: { assets?: { name: string; browser_download_url: string }[] };
+  try {
+    const res = await fetch(LATEST_RELEASE_API_URL, {
+      headers: { Accept: "application/vnd.github+json", "User-Agent": "accountant-ai-operator" },
+      next: { revalidate: 300 },
+    });
 
-  if (!res.ok) {
+    if (!res.ok) {
+      return NextResponse.json({ error: "לא ניתן לשלוף את גרסת ההתקנה העדכנית" }, { status: 502 });
+    }
+
+    release = (await res.json()) as { assets?: { name: string; browser_download_url: string }[] };
+  } catch {
+    // כשל רמת-רשת (DNS/timeout) או תשובה שאינה JSON תקין - בלי try/catch זה
+    // היה זורק ומחזיר שגיאת 500 גנרית של Next במקום ההודעה הברורה בעברית
+    // שכבר קיימת לכל שאר מקרי הכשל כאן.
     return NextResponse.json({ error: "לא ניתן לשלוף את גרסת ההתקנה העדכנית" }, { status: 502 });
   }
 
-  const release = (await res.json()) as { assets?: { name: string; browser_download_url: string }[] };
   const exeAsset = release.assets?.find((asset) => asset.name.endsWith(".exe"));
 
   if (!exeAsset) {

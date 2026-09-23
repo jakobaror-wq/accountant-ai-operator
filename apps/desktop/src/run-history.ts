@@ -19,8 +19,9 @@ function runsDir(): string {
  * כזו סורקת וקוראת מחדש כל קובץ ריצה שנשמר אי-פעם (readdirSync+readFileSync
  * בלולאה), סינכרונית, על אותו תהליך שגם מצלם מסך ומזיז עכבר - ומאט עם הזמן
  * ככל שנצברות יותר ריצות. הקאש נבנה פעם אחת (עצל, בקריאה הראשונה) מהדיסק,
- * ואז מתעדכן ישירות ב-saveRun/clearRun - בלי לסרוק שוב. תמיד עקבי עם הדיסק
- * כי זו האפליקציה היחידה שכותבת לתיקייה הזו.
+ * ואז מתעדכן ישירות ב-saveRun - בלי לסרוק שוב. תמיד עקבי עם הדיסק כי זו
+ * האפליקציה היחידה שכותבת לתיקייה הזו. (אין today מנגנון מחיקה/ניקוי ריצות -
+ * ר' docs/05-DATA-MODEL.md סעיף "מה עדיין פתוח".)
  */
 let cache: Map<string, StoredRunRecord> | null = null;
 
@@ -61,10 +62,13 @@ export function getRun(id: string): StoredRunRecord | null {
   return loadCache().get(id) ?? null;
 }
 
-/** ריצה שנשארה "in-progress" בדיסק פירושה שהאפליקציה נסגרה/קרסה באמצע - לא הסתיימה כרגיל. */
+/**
+ * ריצה שנשארה "in-progress" בדיסק פירושה שהאפליקציה נסגרה/קרסה באמצע - לא
+ * הסתיימה כרגיל. אם יש כמה כאלה לאותו connector (קרה יותר מפעם אחת בלי
+ * שהמשתמש המשיך אף אחת), חייבים לבחור באופן דטרמיניסטי את **האחרונה** - לא
+ * לפי סדר ה-Map (תלוי בסדר טעינה מהדיסק, לא כרונולוגי) - listRuns() כבר
+ * ממוין מהחדש לישן, אז ההתאמה הראשונה שם היא תמיד הנכונה.
+ */
 export function findIncompleteRun(connectorId: string): StoredRunRecord | null {
-  for (const run of loadCache().values()) {
-    if (run.status === "in-progress" && run.connectorId === connectorId) return run;
-  }
-  return null;
+  return listRuns().find((run) => run.status === "in-progress" && run.connectorId === connectorId) ?? null;
 }

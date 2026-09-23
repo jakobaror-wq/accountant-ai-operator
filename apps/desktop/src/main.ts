@@ -106,11 +106,20 @@ function createWindow(): BrowserWindow {
     const delay = nextReloadDelay(reloadAttempt);
     reloadAttempt += 1;
     setTimeout(() => {
-      if (!win.isDestroyed()) void win.loadURL(WEB_URL);
+      // loadURL() דוחה (reject) בדיוק כשdid-fail-load יורה - זה לא מידע חדש
+      // (כבר מטופל למעלה ע"י תזמון הניסיון החוזר עצמו), אבל בלי .catch() כאן
+      // ה-rejection הבלתי-מטופל מפיל את **כל תהליך ה-main** של Electron מיד
+      // (התנהגות ברירת המחדל של Node מ-v15+) - כלומר בדיוק התרחיש שהניסיון
+      // החוזר הזה נועד לטפל בו (רשת לא מוכנה מיד אחרי הפעלה) היה בעצם מקריס
+      // את האפליקציה במקום לתקן אותה, עוד לפני שהטיימר של הניסיון הבא נורה.
+      if (!win.isDestroyed()) win.loadURL(WEB_URL).catch(() => {});
     }, delay);
   });
 
-  void win.loadURL(WEB_URL);
+  // אותה סיבה בדיוק חלה גם על הטעינה הראשונית - כשל רשת מיידי (למשל מחשב
+  // שהתעורר הרגע) יקריס את התהליך כאן, לפני שה-listener למעלה בכלל יספיק
+  // לתפוס את did-fail-load ולתזמן ניסיון חוזר.
+  win.loadURL(WEB_URL).catch(() => {});
   return win;
 }
 
@@ -227,11 +236,23 @@ app.whenReady().then(() => {
           new Promise<string>((resolve) => {
             pendingQuestion = { step, question, resolve };
           }),
-      }).finally(() => {
-        taskRunning = false;
-        currentConnectorId = null;
-        currentTask = null;
-      });
+      })
+        .catch((err: unknown) => {
+          // בלי catch כאן, כל שגיאה לא-צפויה בתוך הלולאה (כולל כשל כתיבה
+          // לדיסק מתוך onUpdate - למשל דיסק מלא, נעילת קובץ זמנית) מפילה את
+          // **כל תהליך ה-main** של Electron באמצע משימה, בשקט וללא הסבר -
+          // בדיוק ההפך מהעיקרון "תמיד תסביר מה נכשל ולמה". עכשיו זה מדווח
+          // כשגיאה רגילה במקום להקריס את האפליקציה.
+          const message = `internal-error: ${err instanceof Error ? err.message : String(err)}`;
+          if (!sender.isDestroyed()) {
+            sender.send("aiop:task-update", { type: "error", step: 0, message });
+          }
+        })
+        .finally(() => {
+          taskRunning = false;
+          currentConnectorId = null;
+          currentTask = null;
+        });
 
       return { started: true };
     },
