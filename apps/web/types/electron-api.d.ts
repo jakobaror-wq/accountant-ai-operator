@@ -27,6 +27,7 @@ interface RunStepRecord {
   decision?: "approved" | "rejected";
   outcome: "executed" | "rejected" | "stopped" | "failed" | "done" | "asked";
   error?: string;
+  source?: "ai" | "macro";
 }
 
 interface LearnedScreen {

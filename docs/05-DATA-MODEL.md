@@ -32,7 +32,7 @@ interface StoredRunRecord {
   finishedAt: string;
   status: "in-progress" | "done" | "stopped" | "rejected" | "error" | "max-steps-reached";
   summary?: string;
-  steps: RunStepRecord[];  // step, timestamp, reasoning?, screenLabel?, confidence?, action?, requiresApproval?, decision?, outcome, error?
+  steps: RunStepRecord[];  // step, timestamp, reasoning?, screenLabel?, confidence?, action?, requiresApproval?, decision?, outcome, error?, source? ("ai"|"macro" - ר' סעיף 4א)
 }
 ```
 

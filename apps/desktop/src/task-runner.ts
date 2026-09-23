@@ -15,6 +15,12 @@ export interface RunStepRecord {
   decision?: "approved" | "rejected";
   outcome: "executed" | "rejected" | "stopped" | "failed" | "done" | "asked";
   error?: string;
+  /** "macro" = הוחלט מקאש בלי קריאת AI (ר' macros.ts), "ai" = קריאה חיה
+   * ל-Grok. חסר (undefined) בצעדים ישנים שנשמרו לפני שהשדה הזה נוסף - לא
+   * אומר "ai" בהכרח, פשוט לא ידוע. נשמר ביומן הביקורת (לא רק באירוע ה-UI
+   * החי) כדי שאפשר יהיה לבדוק בדיעבד אילו צעדים שוחזרו ממאקרו - קריטי
+   * לתכונה שטרם אומתה בפועל, ר' docs/09-COMPUTER-USE-AGENT.md. */
+  source?: "ai" | "macro";
 }
 
 export interface RunRecord {
@@ -453,6 +459,7 @@ export async function runComputerUseTask(params: {
       requiresApproval: next.requiresApproval,
       decision: next.requiresApproval ? "approved" : undefined,
       outcome: "executed",
+      source: usedMacro ? "macro" : "ai",
     });
     checkpoint();
 

@@ -146,6 +146,7 @@ export default function AuditPage() {
                 <li key={step.step}>
                   {step.step}. [{step.screenLabel ?? "?"}
                   {typeof step.confidence === "number" && `, ביטחון ${Math.round(step.confidence * 100)}%`}]{" "}
+                  {step.source === "macro" && "🔁 "}
                   {step.reasoning ?? step.error ?? step.outcome}
                   {step.action && ` → ${step.action.type}`}
                   {step.decision && ` (${step.decision === "approved" ? "אושר" : "נדחה"})`}
