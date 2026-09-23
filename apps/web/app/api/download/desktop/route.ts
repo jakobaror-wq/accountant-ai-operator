@@ -5,16 +5,20 @@ import { NextResponse } from "next/server";
  * מסנן רווחים משמות asset - זו הייתה הסיבה ל-404 הקודם), שולפים כאן את
  * ה-Release העדכני בזמן אמת ומפנים ל-asset ה-.exe שבו. כך הקישור לעולם לא
  * נשבר, גם כשה-CI (build-desktop.yml) מפרסם build חדש.
+ *
+ * ה-fetch עצמו כן מתעדכן אוטומטית (revalidate) כל כמה דקות במקום no-store -
+ * אין שום צורך בטריות מוחלטת בכל קליק בודד, רק שזה לעולם לא יישאר תקוע-לצמיתות
+ * על גרסה ישנה. עדיין תמיד שם הקובץ האמיתי מה-API, לא קובץ מקודד קשיח.
  */
 const LATEST_RELEASE_API_URL =
   "https://api.github.com/repos/jakobaror-wq/accountant-ai-operator/releases/latest";
 
-export const dynamic = "force-dynamic";
+export const revalidate = 300;
 
 export async function GET() {
   const res = await fetch(LATEST_RELEASE_API_URL, {
     headers: { Accept: "application/vnd.github+json", "User-Agent": "accountant-ai-operator" },
-    cache: "no-store",
+    next: { revalidate: 300 },
   });
 
   if (!res.ok) {
