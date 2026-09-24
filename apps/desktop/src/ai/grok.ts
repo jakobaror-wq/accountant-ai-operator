@@ -11,6 +11,18 @@ export const DEFAULT_GROK_MODEL = "grok-4.6";
 /** סף הביטחון - מתחתיו הסוכן חייב לשאול במקום לנחש (ר' SYSTEM_PROMPT). */
 export const CONFIDENCE_THRESHOLD = 0.95;
 
+/**
+ * **עדכון (2026-09-24) - באג אמיתי שהתגלה בבדיקה חיה:** עד עכשיו לקריאת
+ * net.fetch כאן לא היה שום timeout - אם הבקשה נתקעת (פרוקסי תקוע, handshake
+ * TLS שלא מסתיים, DNS איטי) הלולאה בtask-runner.ts פשוט ממתינה **לצמיתות**,
+ * בלי שום שגיאה ובלי שום סימן חזותי לבעיה. זה בדיוק תואם דיווח משתמש: התוכנה
+ * הנכונה נפתחת, חלון-החיווי מראה "הסוכן פעיל", ואז שום דבר לא קורה - לא
+ * קליק, לא הודעת שגיאה, כלום. עכשיו יש AbortController עם timeout מפורש -
+ * אם התגובה לא מגיעה בזמן, זה נכשל בבירור (ולפי isRetryableAiError
+ * ב-task-runner.ts, זה עדיין ינסה שוב עד MAX_AI_RETRIES לפני שיוצג למשתמש).
+ */
+const AI_REQUEST_TIMEOUT_MS = 45000;
+
 export type ComputerActionRequest =
   | { type: "click"; x: number; y: number; button?: "left" | "right" }
   | { type: "double_click"; x: number; y: number }
@@ -131,29 +143,43 @@ export async function requestNextAction(params: {
   // ברמת המערכת/רשת, בניגוד ל-fetch של Node שמתעלם מהן. זה מה שהסביר מקרה
   // שבו שאר האפליקציה (שנטענת מ-Vercel דרך אותו חלון) עובדת אבל קריאות ה-AI
   // נכשלות עם "fetch failed" - היו יוצאות ישירות בלי לעבור דרך פרוקסי נדרש.
-  const response = await net.fetch(`${XAI_BASE_URL}/chat/completions`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${params.apiKey}`,
-    },
-    body: JSON.stringify({
-      model: params.model ?? DEFAULT_GROK_MODEL,
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        {
-          role: "user",
-          content: [
-            { type: "text", text: buildUserPrompt(params) },
-            {
-              type: "image_url",
-              image_url: { url: `data:image/png;base64,${params.screenshotBase64}` },
-            },
-          ],
-        },
-      ],
-    }),
-  });
+  const timeoutController = new AbortController();
+  const timeoutId = setTimeout(() => timeoutController.abort(), AI_REQUEST_TIMEOUT_MS);
+
+  let response: Awaited<ReturnType<typeof net.fetch>>;
+  try {
+    response = await net.fetch(`${XAI_BASE_URL}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${params.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: params.model ?? DEFAULT_GROK_MODEL,
+        messages: [
+          { role: "system", content: SYSTEM_PROMPT },
+          {
+            role: "user",
+            content: [
+              { type: "text", text: buildUserPrompt(params) },
+              {
+                type: "image_url",
+                image_url: { url: `data:image/png;base64,${params.screenshotBase64}` },
+              },
+            ],
+          },
+        ],
+      }),
+      signal: timeoutController.signal,
+    });
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new Error(`xai-timeout: לא התקבלה תגובה מ-xAI תוך ${AI_REQUEST_TIMEOUT_MS / 1000} שניות`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 
   if (!response.ok) {
     const body = await response.text();

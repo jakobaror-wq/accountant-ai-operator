@@ -63,6 +63,24 @@ function saveConnectorTarget(connectorId: string, target: string): void {
   writeConnectorPaths(current);
 }
 
+let mainWindow: BrowserWindow | null = null;
+
+/**
+ * מביא את חלון האפליקציה הראשי לקדמת הבמה - קריטי לרגע שבו הסוכן שואל
+ * שאלה או מבקש אישור: window-focus.ts כבר הביא את **תוכנת ההנה"ח** לקדמת
+ * הבמה לפני הלולאה, מה שמסתיר את חלון האפליקציה שלנו (שם בדיוק מוצגות
+ * השאלה/בקשת האישור) - בלי זה המשתמש לא יודע שיש משהו שממתין לתשובתו,
+ * במיוחד אם הוא לא מסתכל כרגע על חלון ה-agent (בדיוק התרחיש שגילה את
+ * הבאג הזה בבדיקה חיה, 2026-09-24: החלון-חיווי התמיד-עליון מראה שהסוכן
+ * "פעיל" אבל לא מציג את תוכן השאלה/האישור עצמו).
+ */
+function focusMainWindow(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+}
+
 function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
     width: 1280,
@@ -121,6 +139,10 @@ function createWindow(): BrowserWindow {
   // שהתעורר הרגע) יקריס את התהליך כאן, לפני שה-listener למעלה בכלל יספיק
   // לתפוס את did-fail-load ולתזמן ניסיון חוזר.
   win.loadURL(WEB_URL).catch(() => {});
+  mainWindow = win;
+  win.on("closed", () => {
+    if (mainWindow === win) mainWindow = null;
+  });
   return win;
 }
 
@@ -166,16 +188,36 @@ function showAgentIndicator(connectorName: string): void {
   html,body{margin:0;height:100%;}
   body{font-family:system-ui,sans-serif;background:#312e81;color:#fff;padding:12px 16px;box-sizing:border-box;-webkit-app-region:drag;}
   .title{font-weight:600;font-size:14px;}
-  .sub{font-size:12px;opacity:.85;margin-top:4px;line-height:1.4;}
+  .sub{font-size:12px;opacity:.85;margin-top:4px;line-height:1.4;max-height:2.8em;overflow:hidden;}
+  .sub.waiting{opacity:1;color:#fde047;font-weight:600;}
+  .sub.error{opacity:1;color:#fca5a5;font-weight:600;}
   button{-webkit-app-region:no-drag;margin-top:8px;background:#ef4444;color:#fff;border:none;border-radius:6px;padding:6px 14px;font-size:12px;cursor:pointer;}
   button:hover{background:#dc2626;}
 </style></head><body>
   <div class="title">🤖 הסוכן AI פעיל כעת</div>
-  <div class="sub">עובד על: ${escapedName} - אל תיגע בעכבר/מקלדת</div>
+  <div class="sub" id="status">עובד על: ${escapedName} - אל תיגע בעכבר/מקלדת</div>
   <button id="stop">עצור</button>
-  <script>document.getElementById("stop").addEventListener("click", () => window.indicatorAPI.stop());</script>
+  <script>
+    document.getElementById("stop").addEventListener("click", () => window.indicatorAPI.stop());
+    window.indicatorAPI.onStatus((text) => {
+      const el = document.getElementById("status");
+      el.textContent = text;
+      el.className = "sub" + (text.startsWith("⏸") || text.startsWith("❓") ? " waiting" : text.startsWith("⚠") ? " error" : "");
+    });
+  </script>
 </body></html>`;
   void indicatorWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+}
+
+/**
+ * מעדכן את הטקסט המשתנה בחלון-החיווי (ר' showAgentIndicator) - זה מה
+ * שהופך אותו מהודעה קבועה ("הסוכן פעיל") לחיווי חי על התקדמות בפועל, כדי
+ * שהמשתמש - שלא אמור לגעת בעכבר/מקלדת ולכן כנראה לא מסתכל על חלון
+ * האפליקציה הראשי - יראה בכל זאת שמשהו קורה, ומתי דרושה תשומת לבו.
+ */
+function updateIndicatorStatus(text: string): void {
+  if (!indicatorWindow || indicatorWindow.isDestroyed()) return;
+  indicatorWindow.webContents.send("aiop:indicator-status", text);
 }
 
 function hideAgentIndicator(): void {
@@ -306,14 +348,34 @@ app.whenReady().then(() => {
           if (update.type === "action") recordScreen(connectorId, update.screenLabel, update.reasoning);
           if (update.type === "run-summary") saveRun(update.run);
           if (!sender.isDestroyed()) sender.send("aiop:task-update", update);
+
+          // מזין את חלון-החיווי (ר' updateIndicatorStatus) בטקסט חי לפי סוג
+          // האירוע - זה הדבר היחיד שכמעט בטוח גלוי למשתמש כרגע (הוא לא אמור
+          // לגעת בעכבר/מקלדת, וחלון האפליקציה הראשי מוסתר מאחורי תוכנת
+          // ההנה"ח). ⏸/❓/⚠ בתחילת הטקסט נבחרו בכוונה - showAgentIndicator
+          // מזהה אותם כדי לצבוע את השורה (המתנה/שגיאה) שונה מפעילות רגילה.
+          if (update.type === "step-start") {
+            updateIndicatorStatus(`שלב ${update.step}: מצלם ומנתח את המסך...`);
+          } else if (update.type === "action") {
+            updateIndicatorStatus(`שלב ${update.step}: ${update.reasoning}`);
+          } else if (update.type === "awaiting-approval") {
+            updateIndicatorStatus("⏸ ממתין לאישור שלך - חלון האפליקציה נפתח");
+          } else if (update.type === "awaiting-answer") {
+            updateIndicatorStatus(`❓ ${update.question} - חלון האפליקציה נפתח לתשובה`);
+          } else if (update.type === "error") {
+            updateIndicatorStatus(`⚠ שגיאה: ${update.message}`);
+            focusMainWindow();
+          }
         },
         waitForApproval: (step, reasoning, confidence, action, source) =>
           new Promise<boolean>((resolve) => {
             pendingApproval = { step, reasoning, confidence, action, source, resolve };
+            focusMainWindow();
           }),
         waitForAnswer: (step, question) =>
           new Promise<string>((resolve) => {
             pendingQuestion = { step, question, resolve };
+            focusMainWindow();
           }),
       })
         .catch((err: unknown) => {
