@@ -64,23 +64,45 @@ async function findMatchingWindow(hints: string[]): Promise<Window | null> {
 }
 
 /**
+ * כשההתאמה נכשלת, זה כמעט תמיד כי רמז-הכותרת בקוד לא תואם את הכותרת
+ * האמיתית של החלון על המחשב הספציפי הזה (לא מאומת מהסביבה שפיתחה את זה -
+ * ר' WINDOW_TITLE_HINTS למעלה). במקום לגרום למשתמש לחפש בעצמו איך לבדוק את
+ * זה, מציגים ישירות בהודעת השגיאה את כל כותרות החלונות הפתוחים בפועל - כך
+ * שאפשר לתקן את הרמז הנכון ב-WINDOW_TITLE_HINTS ישר מתוך הודעת השגיאה,
+ * בלי סבב-בירור נוסף.
+ */
+async function listAllWindowTitles(): Promise<string[]> {
+  const windows = await getWindows();
+  const titles: string[] = [];
+  for (const win of windows) {
+    try {
+      const title = await win.getTitle();
+      if (title) titles.push(title);
+    } catch {
+      // חלון שנעלם באמצע - מדלגים.
+    }
+  }
+  return titles;
+}
+
+/**
  * focus() של nut-js לא תמיד מצליח בפועל (תלוי במנהל-החלונות של מערכת
  * ההפעלה) - במקום לסמוך על ערך ההחזרה שלו בלבד, בודקים בפועל דרך
  * getActiveWindow() אחרי השהיה קצרה שהחלון הנכון באמת הפך לפעיל.
  */
-async function focusAndVerify(win: Window, hints: string[]): Promise<boolean> {
+async function focusAndVerify(win: Window, hints: string[]): Promise<{ ok: boolean; activeTitle?: string }> {
   try {
     await win.focus();
   } catch {
-    return false;
+    return { ok: false };
   }
   await new Promise((resolve) => setTimeout(resolve, FOCUS_VERIFY_DELAY_MS));
   try {
     const active = await getActiveWindow();
     const title = await active.getTitle();
-    return titleMatchesHints(title, hints);
+    return { ok: titleMatchesHints(title, hints), activeTitle: title };
   } catch {
-    return false;
+    return { ok: false };
   }
 }
 
@@ -113,20 +135,29 @@ export async function focusConnectorWindow(connectorId: string, exePath: string 
     }
 
     if (!win) {
+      const openTitles = await listAllWindowTitles();
+      const titlesText =
+        openTitles.length > 0
+          ? openTitles
+              .slice(0, 15)
+              .map((t) => `"${t}"`)
+              .join(", ")
+          : "לא זוהה אף חלון פתוח כלל - ייתכן שזו לא בעיית-התאמת-שם אלא בעיה רחבה יותר בזיהוי חלונות במערכת הזו";
       return {
         success: false,
         error: "window-not-found-after-launch",
-        detail: "התוכנה הופעלה אך לא זוהה חלון שלה בזמן שהוקצב - ייתכן שהיא עדיין נטענת, או שהגדרת זיהוי-החלון לא מדויקת.",
+        detail: `התוכנה הופעלה אך לא זוהה חלון שתואם לרמזים (${hints.join(", ")}) בזמן שהוקצב. חלונות פתוחים שזוהו בפועל: ${titlesText}. אם התוכנה בבירור פתוחה - יש לעדכן את WINDOW_TITLE_HINTS בקובץ window-focus.ts עם הכותרת האמיתית מהרשימה הזו.`,
       };
     }
   }
 
-  const focused = await focusAndVerify(win, hints);
-  if (!focused) {
+  const focusResult = await focusAndVerify(win, hints);
+  if (!focusResult.ok) {
+    const activeInfo = focusResult.activeTitle ? ` החלון הפעיל בפועל אחרי הניסיון: "${focusResult.activeTitle}".` : "";
     return {
       success: false,
       error: "focus-failed",
-      detail: "נמצא חלון מתאים, אך לא הצלחתי להביא אותו לקדמת הבמה בפועל.",
+      detail: `נמצא חלון מתאים, אך לא הצלחתי להביא אותו לקדמת הבמה בפועל.${activeInfo}`,
     };
   }
 
