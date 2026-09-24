@@ -27,6 +27,7 @@ export interface RunStepRecord {
   decision?: "approved" | "rejected";
   outcome: "executed" | "rejected" | "stopped" | "failed" | "done" | "asked";
   error?: string;
+  source?: "ai" | "macro";
 }
 
 export interface LearnedScreen {
@@ -61,6 +62,7 @@ export type TaskUpdateEvent =
       screenLabel: string;
       confidence: number;
       action: ComputerActionRequest;
+      source: "ai" | "macro";
     }
   | {
       type: "awaiting-approval";
@@ -68,6 +70,7 @@ export type TaskUpdateEvent =
       reasoning: string;
       confidence: number;
       action: ComputerActionRequest;
+      source: "ai" | "macro";
     }
   | { type: "awaiting-answer"; step: number; question: string }
   | { type: "rejected"; step: number }
@@ -79,7 +82,9 @@ export type TaskUpdateEvent =
 
 export interface RunTaskResult {
   started: boolean;
-  error?: "task-already-running" | "no-api-key";
+  error?: "task-already-running" | "no-api-key" | "window-not-found";
+  /** פירוט נוסף כשה-error הוא "window-not-found" - ר' window-focus.ts. */
+  detail?: string;
 }
 
 export interface ResolveDroppedPathResult {
@@ -92,7 +97,13 @@ export interface AgentStatus {
   running: boolean;
   connectorId: string | null;
   task: string | null;
-  pendingApproval: { step: number; reasoning: string; confidence: number; action: ComputerActionRequest } | null;
+  pendingApproval: {
+    step: number;
+    reasoning: string;
+    confidence: number;
+    action: ComputerActionRequest;
+    source: "ai" | "macro";
+  } | null;
   pendingQuestion: { step: number; question: string } | null;
 }
 

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, shell } from "electron";
+import { app, BrowserWindow, screen, ipcMain, dialog, shell } from "electron";
 import { autoUpdater } from "electron-updater";
 import path from "node:path";
 import fs from "node:fs";
@@ -16,6 +16,7 @@ import type { ComputerActionRequest } from "./ai/grok";
 import { saveRun, listRuns, getRun, findIncompleteRun } from "./run-history";
 import { getLearnedScreens, recordScreen } from "./screen-memory";
 import { isRetryableLoadFailure, nextReloadDelay } from "./window-reload";
+import { focusConnectorWindow, getConnectorDisplayName } from "./window-focus";
 
 /**
  * ברירת המחדל היא האתר החי ב-Vercel. אפשר לדרוס בזמן פיתוח מקומי:
@@ -123,6 +124,65 @@ function createWindow(): BrowserWindow {
   return win;
 }
 
+let indicatorWindow: BrowserWindow | null = null;
+
+/**
+ * חלון קטן, תמיד-עליון, שמוצג כל עוד משימת AI רצה - כדי לפתור בדיוק את
+ * התרחיש שגרם לבאג המקורי: המשתמש לא הביט בכלל במסך ה-agent (הוא עבד
+ * ידנית בתוכנה אחרת), אז שום דבר לא סימן לו שהסוכן עומד לקחת שליטה על
+ * העכבר/מקלדת. מוצג בפינה, נטען מ-data URL מקומי (לא מהאתר) - לא תלוי
+ * ב-WEB_URL בכלל, ולכן ממשיך לעבוד גם אם טעינת האתר עצמה נכשלת/איטית.
+ */
+function showAgentIndicator(connectorName: string): void {
+  if (indicatorWindow && !indicatorWindow.isDestroyed()) indicatorWindow.close();
+
+  const { workArea } = screen.getPrimaryDisplay();
+  const width = 300;
+  const height = 100;
+
+  indicatorWindow = new BrowserWindow({
+    width,
+    height,
+    x: workArea.x + workArea.width - width - 16,
+    y: workArea.y + 16,
+    frame: false,
+    resizable: false,
+    movable: true,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    backgroundColor: "#312e81",
+    webPreferences: {
+      preload: path.join(__dirname, "indicator-preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  indicatorWindow.setAlwaysOnTop(true, "screen-saver");
+
+  const escapedName = connectorName.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const html = `<!doctype html>
+<html dir="rtl" lang="he"><head><meta charset="utf-8"><style>
+  html,body{margin:0;height:100%;}
+  body{font-family:system-ui,sans-serif;background:#312e81;color:#fff;padding:12px 16px;box-sizing:border-box;-webkit-app-region:drag;}
+  .title{font-weight:600;font-size:14px;}
+  .sub{font-size:12px;opacity:.85;margin-top:4px;line-height:1.4;}
+  button{-webkit-app-region:no-drag;margin-top:8px;background:#ef4444;color:#fff;border:none;border-radius:6px;padding:6px 14px;font-size:12px;cursor:pointer;}
+  button:hover{background:#dc2626;}
+</style></head><body>
+  <div class="title">🤖 הסוכן AI פעיל כעת</div>
+  <div class="sub">עובד על: ${escapedName} - אל תיגע בעכבר/מקלדת</div>
+  <button id="stop">עצור</button>
+  <script>document.getElementById("stop").addEventListener("click", () => window.indicatorAPI.stop());</script>
+</body></html>`;
+  void indicatorWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+}
+
+function hideAgentIndicator(): void {
+  if (indicatorWindow && !indicatorWindow.isDestroyed()) indicatorWindow.close();
+  indicatorWindow = null;
+}
+
 let taskRunning = false;
 let stopRequested = false;
 let currentConnectorId: string | null = null;
@@ -216,13 +276,24 @@ app.whenReady().then(() => {
       const apiKey = getXaiApiKey();
       if (!apiKey) return { started: false, error: "no-api-key" as const };
 
+      // נועלים **לפני** ניסיון המיקוד (שיכול לקחת עד 20 שניות - פתיחת
+      // תוכנה איטית), לא אחריו - אחרת שתי קריאות run-task מהירות ברצף
+      // יכולות שתיהן לעבור את הבדיקה למעלה בזמן שהראשונה עוד ממתינה.
+      taskRunning = true;
+
+      const focusResult = await focusConnectorWindow(connectorId, readConnectorPaths()[connectorId]);
+      if (!focusResult.success) {
+        taskRunning = false;
+        return { started: false, error: "window-not-found" as const, detail: focusResult.detail };
+      }
+
       const resumeRun = resumeRunId ? getRun(resumeRunId) : null;
 
       const sender = event.sender;
-      taskRunning = true;
       stopRequested = false;
       currentConnectorId = connectorId;
       currentTask = task;
+      showAgentIndicator(getConnectorDisplayName(connectorId));
 
       void runComputerUseTask({
         apiKey,
@@ -260,6 +331,7 @@ app.whenReady().then(() => {
           taskRunning = false;
           currentConnectorId = null;
           currentTask = null;
+          hideAgentIndicator();
         });
 
       return { started: true };

@@ -52,6 +52,19 @@ function describeAction(action: { type: string } & Record<string, unknown>): str
   }
 }
 
+function describeRunTaskError(result: { error?: string; detail?: string }): string {
+  switch (result.error) {
+    case "no-api-key":
+      return "לא הוגדר מפתח API";
+    case "window-not-found":
+      return `לא הצלחתי להביא את התוכנה לקדמת הבמה${result.detail ? ` - ${result.detail}` : ""}`;
+    case "task-already-running":
+      return "משימה כבר רצה";
+    default:
+      return "משימה כבר רצה";
+  }
+}
+
 export default function AgentPage() {
   const [isElectron, setIsElectron] = useState(false);
   const [hasKey, setHasKey] = useState(false);
@@ -63,6 +76,10 @@ export default function AgentPage() {
   const [connectorId, setConnectorId] = useState(CONNECTORS[0]?.id ?? "");
   const [learnedScreenCount, setLearnedScreenCount] = useState(0);
   const [running, setRunning] = useState(false);
+  // נפרד מ-running: הזמן שבין לחיצת "התחל" לתשובת runTask עצמה, שכולל עכשיו
+  // גם ניסיון להביא את התוכנה הנכונה לקדמת הבמה (ואם צריך, לפתוח אותה) -
+  // יכול לקחת עד ~20 שניות על תוכנה איטית לטעינה, לא רגע מיידי כמו קודם.
+  const [starting, setStarting] = useState(false);
   const [log, setLog] = useState<LogLine[]>([]);
   const [latestScreenshot, setLatestScreenshot] = useState<string | null>(null);
   const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null);
@@ -267,17 +284,13 @@ export default function AgentPage() {
     setPendingQuestion(null);
     setIncompleteRun(null);
     setQueueHalted(false);
+    setStarting(true);
     const result = await window.electronAPI.runTask(task.trim(), connectorId);
+    setStarting(false);
     if (result.started) {
       setRunning(true);
     } else {
-      setLog([
-        {
-          step: 0,
-          kind: "error",
-          text: result.error === "no-api-key" ? "לא הוגדר מפתח API" : "משימה כבר רצה",
-        },
-      ]);
+      setLog([{ step: 0, kind: "error", text: describeRunTaskError(result) }]);
     }
   }
 
@@ -291,17 +304,13 @@ export default function AgentPage() {
     setPendingQuestion(null);
     setIncompleteRun(null);
     setQueueHalted(false);
+    setStarting(true);
     const result = await window.electronAPI.runTask(item.task, item.connectorId);
+    setStarting(false);
     if (result.started) {
       setRunning(true);
     } else {
-      setLog([
-        {
-          step: 0,
-          kind: "error",
-          text: result.error === "no-api-key" ? "לא הוגדר מפתח API" : "משימה כבר רצה",
-        },
-      ]);
+      setLog([{ step: 0, kind: "error", text: describeRunTaskError(result) }]);
       setQueueHalted(true);
     }
   }
@@ -546,7 +555,7 @@ export default function AgentPage() {
           <textarea
             value={task}
             onChange={(e) => setTask(e.target.value)}
-            disabled={running}
+            disabled={running || starting}
             placeholder='למשל: "פתח את חשבשבת ובדוק את מאזן הבוחן של לקוח X"'
             rows={3}
             className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
@@ -556,10 +565,10 @@ export default function AgentPage() {
             <button
               type="button"
               onClick={handleStart}
-              disabled={running || !task.trim() || !connectorId}
+              disabled={running || starting || !task.trim() || !connectorId}
               className="rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
             >
-              {running ? "רץ..." : "התחל"}
+              {running ? "רץ..." : starting ? "מאתר/פותח את התוכנה..." : "התחל"}
             </button>
             {running && (
               <button

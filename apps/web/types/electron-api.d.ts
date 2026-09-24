@@ -82,7 +82,8 @@ type TaskUpdateEvent =
 
 interface RunTaskResult {
   started: boolean;
-  error?: "task-already-running" | "no-api-key";
+  error?: "task-already-running" | "no-api-key" | "window-not-found";
+  detail?: string;
 }
 
 interface ResolveDroppedPathResult {

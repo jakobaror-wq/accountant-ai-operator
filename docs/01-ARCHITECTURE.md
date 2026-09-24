@@ -39,6 +39,7 @@ accountant-ai-operator/
 │           ├── settings.ts       # אחסון מוצפן מקומי - מפתח API + פרטי התחברות
 │           ├── screen-memory.ts  # זיכרון מסכים שנלמדו בפועל, לפי connector
 │           ├── macros.ts         # מאקרו: שידור-חוזר של רצף פעולות בלי קריאת AI, לפי connector+משימה
+│           ├── window-focus.ts   # מוצא/פותח/מביא לקדמה את חלון התוכנה הנכונה לפני שהלולאה מתחילה
 │           ├── run-history.ts    # יומן ביקורת מקומי (JSON per run)
 │           └── window-reload.ts  # ניסיון חוזר אוטומטי אם טעינת ה-UI נכשלת
 └── docs/                          # המסמכים האלה
@@ -52,7 +53,16 @@ accountant-ai-operator/
 משתמש (מסך /agent) מקליד משימה, לוחץ "התחל"
    │  IPC: aiop:run-task(task, connectorId)
    ▼
-main.ts  - נועל (רק ריצה אחת בו-זמנית), קורא ל-task-runner.ts
+main.ts  - נועל (רק ריצה אחת בו-זמנית)
+   │
+   ▼
+window-focus.ts.focusConnectorWindow(connectorId) - מוצא/פותח/מביא לקדמת
+   הבמה את חלון התוכנה הנכונה **לפני** שהלולאה בכלל מתחילה (nut-js window
+   API, לפי טבלת רמזי-כותרת סטטית) - אם נכשל, מוחזר started:false עם
+   error:"window-not-found" ו-task-runner.ts אפילו לא מופעל. ר' סעיף 6.
+   │  (הצלחה)
+   ▼
+main.ts - מציג חלון-חיווי תמיד-עליון ("🤖 הסוכן פעיל"), קורא ל-task-runner.ts
    ▼
 task-runner.ts - לולאה עד MAX_STEPS=40:
    1. computer-use.ts.captureScreenshot() - צילום, מוקטן אם המסך גדול מ-1600px
@@ -81,7 +91,9 @@ run-history.ts שומר את הריצה המלאה - נגיש דרך /audit
 
 ## 5. "Connector" - הרבה יותר פשוט ממה שתוכנן
 
-אין ממשק `SoftwareConnector` עם Zod schemas, `verifyResult`, `recoveryStrategy` וכו'. Connector בפועל הוא רשומה סטטית (`apps/web/lib/connectors.ts`): `id`, `name`, `description`. המשתמש בוחר/גורר את קובץ ה-`.exe` (או קיצור דרך) פעם אחת דרך `/integrations`, הנתיב נשמר מקומית (`connector-paths.json`), ומשם האפליקציה רק מפעילה אותו (`shell.openPath`) ומריצה את לולאת ה-Vision מעליו - אין אינטגרציה ייעודית לפי סוג התוכנה.
+אין ממשק `SoftwareConnector` עם Zod schemas, `verifyResult`, `recoveryStrategy` וכו'. Connector בפועל הוא רשומה סטטית (`apps/web/lib/connectors.ts`): `id`, `name`, `description`. המשתמש בוחר/גורר את קובץ ה-`.exe` (או קיצור דרך) פעם אחת דרך `/integrations`, הנתיב נשמר מקומית (`connector-paths.json`).
+
+**עדכון (2026-09-24):** בתחילת כל משימה, `window-focus.ts` מוצא/פותח/מביא לקדמת הבמה את חלון התוכנה בפועל, לפי טבלת רמזי-כותרת סטטית ונפרדת (`apps/desktop/src/window-focus.ts`, לא `lib/connectors.ts` - שתי חבילות נפרדות ללא ייבוא משותף, בדיוק כמו טיפוסי ה-IPC המשוכפלים ידנית). קודם לכן `aiop:run-task` פשוט התחיל לצלם את המסך בלי לוודא בכלל שהתוכנה הנכונה על המסך - ר' `09-COMPUTER-USE-AGENT.md` לפירוט התקלה שהובילה לתיקון הזה.
 
 תוכנות נתמכות כרגע: Hashavshevet (חשבשבת), Hisulit (חיסולית), Shikulit (שיקולית), Konto (קונטו), Dokka.
 
@@ -94,4 +106,5 @@ run-history.ts שומר את הריצה המלאה - נגיש דרך /audit
 3. **MFA/CAPTCHA** עוצרים אוטומציה - אין today מצב ייעודי לזה מעבר ל-`action: "ask"` הכללי.
 4. **רישוי/תנאי שימוש** של התוכנות המקוריות מול אוטומציית Vision - שאלה פתוחה, ר' `07-ASSUMPTIONS-OPEN-QUESTIONS.md`.
 5. **אמינות הקלדה/קליק** - עיכובי הקלט המובנים של `nut-js` הוקטנו (ר' commit "Reduce nut-js's built-in per-input-event delay") לטובת מהירות; זה שינוי שעדיין דורש אימות מול תוכנות ישנות/איטיות בפועל.
+6. **מסך יחיד, עכבר/מקלדת יחיד, משותף** - כל האוטומציה פועלת על **המסך הפיזי היחיד** של המחשב, דרך עכבר/מקלדת סינתטיים ברמת מערכת ההפעלה (לא מוגבלים לחלון ספציפי). זו לא תקלה שניתן "לתקן" בלי שינוי ארכיטקטוני משמעותי - היא הסיבה ש-`taskRunning` הוא נעילה **גלובלית** (לא per-connector): שתי משימות AI על שני חלונות "במקביל" היו מתנגשות פיזית (קליקים מתערבבים בין שני חלונות). מאותה סיבה, המשתמש **לא יכול לעבוד ידנית** במחשב בזמן שמשימת AI רצה - `window-focus.ts` מביא את החלון הנכון לקדמה לפני שהלולאה מתחילה, וחלון-חיווי תמיד-עליון (ר' `main.ts`, `showAgentIndicator`) מתריע על כך, אבל אין מניעה טכנית שהמשתמש בכל זאת יזיז עכבר/יקליד באמצע ריצה ויפגע בה. אוטומציה מקבילה אמיתית (כמה משימות/משתמש+סוכן בו-זמנית) דורשת מסכי/קלט מבודדים לכל הפעלה (RDP/VM נפרד) - שדרוג תשתית נפרד, לא תוכנן/נבנה.
 </content>

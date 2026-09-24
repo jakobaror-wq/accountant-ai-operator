@@ -59,7 +59,9 @@ npm run dist:linux   # AppImage, לבדיקה מקומית בלבד
 | `screen-memory.ts` | זיכרון מסכים שנלמדו בפועל, לפי connector (`connectors/<id>/screens.json`) |
 | `macros.ts` | מאקרו: רצף פעולות מוקלט מריצה מוצלחת (`connectors/<id>/macros.json`), משודר חוזר ישירות (בלי קריאת AI) כשמשימה חוזרת על עצמה והמסך תואם - ר' `../../docs/05-DATA-MODEL.md` §4א. לא אומת בפועל מול תוכנה אמיתית - ר' "מגבלות ידועות" למטה |
 | `run-history.ts` | יומן ביקורת מקומי (`runs/*.json`), עם cache בזיכרון |
+| `window-focus.ts` | מוצא/פותח/מביא לקדמת הבמה את חלון התוכנה הנכונה **לפני** שלולאת הסוכן מתחילה (nut-js window API + טבלת רמזי-כותרת) - ר' `../../docs/09-COMPUTER-USE-AGENT.md`. רמזי-הכותרת לא מאומתים מול תוכנה אמיתית |
 | `window-reload.ts` | ניסיון חוזר אוטומטי (exponential backoff) אם טעינת ה-UI מ-Vercel נכשלת |
+| `indicator-preload.ts` | preload זעיר נפרד לחלון-החיווי התמיד-עליון ("🤖 הסוכן פעיל") שמוצג כל עוד משימה רצה |
 
 ## אייקון
 
