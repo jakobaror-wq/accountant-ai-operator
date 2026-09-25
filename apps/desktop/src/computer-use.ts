@@ -121,15 +121,55 @@ const KEY_MAP: Record<string, Key> = {
   space: Key.Space,
 };
 
+/** סטייה (בפיקסלים) שעדיין נחשבת "אותה נקודה" - תת-פיקסל/עיגול, לא פער אמיתי. */
+const CLICK_POSITION_TOLERANCE_PX = 2;
+
+/**
+ * **עדכון (2026-09-25) - חשד לבאג-שורש אמיתי, לפי בדיקה חיה:** דיווח משתמש
+ * מראה את ה-AI בעצמו מנמק (בצילום מסך) שקליקים קודמים "יצאו מחוץ למסך
+ * (x>1600) ולכן לא פגעו" - כלומר ה-AI כן מחליט פעולות אמיתיות (לא תקוע/לא
+ * שגיאת רשת), אבל הקליקים בפועל לא פוגעים איפה שצריך. חשד מרכזי: פער בין
+ * מרחב-הקואורדינטות שבו ה-AI מחשב (פיקסלים לוגיים של Electron - אותו מרחב
+ * שבו נמדד צילום המסך, ר' captureScreenshot) לבין המרחב שבו nut-js בפועל
+ * ממקם את העכבר ברמת מערכת ההפעלה (לרוב פיקסלים **פיזיים**, כש-Windows
+ * מוגדר ל-DPI scaling מעל 100% - נפוץ מאוד במחשבי עבודה רגילים, ולא נבדק
+ * כלל בסביבה הזו). קריאה חוזרת ל-mouse.getPosition() של nut-js לא הייתה
+ * מוכיחה כלום - אם nut-js "חושב" שהוא במרחב אחד, הוא יחזיר בדיוק את מה
+ * שהתבקש גם אם בפועל זו נקודה אחרת על המסך הפיזי. לכן הבדיקה כאן משתמשת
+ * ב-**Electron's screen.getCursorScreenPoint()** - מקור-אמת עצמאי לגמרי מ-
+ * nut-js, באותו מרחב-קואורדינטות שבו חושב שאר הקוד (ואיתו ה-AI). אם יש
+ * פער - זו הוכחה ישירה (לא ניחוש) שהיחס הנצפה הוא יחס-הסקייל האמיתי, ומתקנים
+ * לפיו במקום לפי הנחה תיאורטית מראש (למשל display.scaleFactor, שיכול לפספס
+ * אם ה-DPI-awareness בפועל שונה ממה שמצופה).
+ */
+async function moveMouseVerified(x: number, y: number): Promise<void> {
+  await mouse.setPosition(new Point(x, y));
+  const actual = screen.getCursorScreenPoint();
+  const dx = actual.x - x;
+  const dy = actual.y - y;
+  if (Math.abs(dx) <= CLICK_POSITION_TOLERANCE_PX && Math.abs(dy) <= CLICK_POSITION_TOLERANCE_PX) return;
+
+  if (x === 0 || y === 0) return; // אין יחס-סקייל שניתן לחשב מנקודה על הציר - לא מתקנים בעיוורון.
+  const scaleX = actual.x / x;
+  const scaleY = actual.y / y;
+  if (scaleX <= 0 || scaleY <= 0) return; // יחס לא-הגיוני (למשל כיוון הפוך) - עדיף לא לתקן מאשר להחמיר.
+
+  console.warn(
+    `[computer-use] פער מיקום עכבר: ביקשנו (${x},${y}), בפועל (${actual.x},${actual.y}) - ` +
+      `יחס נצפה (${scaleX.toFixed(3)}, ${scaleY.toFixed(3)}), כנראה DPI scaling. מתקן.`,
+  );
+  await mouse.setPosition(new Point(Math.round(x / scaleX), Math.round(y / scaleY)));
+}
+
 export async function executeAction(action: ComputerAction): Promise<void> {
   switch (action.type) {
     case "click":
-      await mouse.setPosition(new Point(action.x, action.y));
+      await moveMouseVerified(action.x, action.y);
       await mouse.click(action.button === "right" ? Button.RIGHT : Button.LEFT);
       return;
 
     case "double_click":
-      await mouse.setPosition(new Point(action.x, action.y));
+      await moveMouseVerified(action.x, action.y);
       await mouse.doubleClick(Button.LEFT);
       return;
 
