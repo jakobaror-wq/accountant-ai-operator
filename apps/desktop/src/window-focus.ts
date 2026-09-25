@@ -54,7 +54,11 @@ export function getConnectorDisplayName(connectorId: string): string {
   return WINDOW_TITLE_HINTS[connectorId]?.[0] ?? connectorId;
 }
 
-const LAUNCH_TIMEOUT_MS = 20000;
+// הוגדל מ-20 שניות (עדכון 2026-09-25) - דיווח משתמש הראה כשל timeout אמיתי
+// (window-not-found-after-launch) שהרשימה-בהודעה לא כללה שום חלון שניתן
+// לזהות כתוכנת ההנה"ח - תוכנות הנה"ח ותיקות/כבדות (בדיקת רישיון, splash
+// screen) יכולות לקחת יותר מ-20 שניות להיטען, בעיקר בהפעלה ראשונה ביום.
+const LAUNCH_TIMEOUT_MS = 30000;
 const POLL_INTERVAL_MS = 500;
 const FOCUS_VERIFY_DELAY_MS = 200;
 
@@ -213,6 +217,14 @@ export async function focusConnectorWindow(connectorId: string, exePath: string 
 
     // תצלום-מצב **לפני** ההפעלה - הבסיס לזיהוי "מה חדש" בלי תלות בכותרת.
     const beforeLaunch = await snapshotWindowRegions();
+    // ר' ההערה בלולאת הפולינג למטה - נקודת-ייחוס לזיהוי "שינוי חלון פעיל",
+    // ה-fallback לתוכנה חד-מופעית שכבר הייתה פתוחה.
+    let activeBeforeLaunchSignature: string | null = null;
+    try {
+      activeBeforeLaunchSignature = regionSignature(await (await getActiveWindow()).getRegion());
+    } catch {
+      // אין חלון פעיל כרגע (או שנכשלה הקריאה) - לא קריטי, ה-fallback פשוט לא יופעל.
+    }
 
     const openError = await shell.openPath(exePath);
     if (openError) {
@@ -223,6 +235,28 @@ export async function focusConnectorWindow(connectorId: string, exePath: string 
     while (Date.now() < deadline && !win) {
       await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
       win = await findNewWindowSince(beforeLaunch, hints);
+
+      // **Fallback קריטי (עדכון 2026-09-25)**: אם התוכנה כבר הייתה פתוחה
+      // (כותרת משובשת - ר' הבהרה בראש הקובץ) והיא חד-מופעית (single-
+      // instance, נפוץ מאוד בתוכנות הנה"ח) - shell.openPath לא פותח חלון
+      // "חדש" בכלל, רק מפעיל-מחדש/מביא-לקדמה את החלון הקיים. זיהוי-חלון-
+      // חדש-לפי-region לעולם לא ימצא כלום במצב הזה, וה-timeout תמיד היה
+      // נכשל, גם כשההפעלה עצמה הצליחה במלואה - זה בדיוק תואם דיווח משתמש
+      // אמיתי (window-not-found-after-launch, בלי שום חלון מזוהה כהנה"ח
+      // ברשימה). לכן: אם החלון **הפעיל** השתנה מאז רגע לפני ההפעלה (גם אם
+      // זה חלון "ישן" שכבר היה קיים, לא "חדש") - זו ראייה סבירה מספיק
+      // שזה בדיוק מה שקרה, ומקבלים את זה כתוצאה. focusAndVerify() בהמשך
+      // עדיין מוודא בפועל שהחלון הזה נשאר פעיל - רשת-ביטחון נוספת נגד
+      // "שינוי חולף" (למשל דיאלוג/התראה של Windows שהבהב לרגע).
+      if (!win && activeBeforeLaunchSignature) {
+        try {
+          const active = await getActiveWindow();
+          const activeSignature = regionSignature(await active.getRegion());
+          if (activeSignature !== activeBeforeLaunchSignature) win = active;
+        } catch {
+          // אין חלון פעיל כרגע - ממשיכים לפולינג הרגיל.
+        }
+      }
     }
 
     if (!win) {
