@@ -19,6 +19,38 @@ import { isRetryableLoadFailure, nextReloadDelay } from "./window-reload";
 import { focusConnectorWindow, getConnectorDisplayName } from "./window-focus";
 
 /**
+ * **עדכון (2026-09-26) - תיקון-שורש אמיתי, לפי ראיה חיה:** משתמש דיווח על
+ * `xai-timeout` (בדיוק 45 שניות - הערך המדויק של timeout-חדש שהוספנו) בכל
+ * קריאה ל-xAI, בעוד שדפדפן רגיל **באותו מחשב** הצליח להגיע ל-api.x.ai בלי
+ * בעיה. פער כזה - דפדפן עובד, Electron תקוע - הוא חתימה ידועה של **פרוקסי
+ * ארגוני עם אימות** (NTLM/Kerberos, נפוץ מאוד במשרדי רואי חשבון): דפדפנים
+ * מבצעים "Integrated Windows Authentication" שקוף (מזהי המשתמש המחובר,
+ * בלי סיסמה נוספת) מול פרוקסי כזה כברירת מחדל; Chromium/Electron **לא**
+ * עושים את זה אוטומטית לכל שרת - רק לרשימת שרתים מפורשת
+ * (auth-server-whitelist), שריקה כברירת מחדל באפליקציית Electron טרייה.
+ * בלי זה, אתגר-אימות מהפרוקסי פשוט "נתקע" בשקט (לא נכשל מיידית) עד ה-
+ * timeout שלנו - בדיוק התופעה שנצפתה. `*` כאן מרחיב את זה לכל שרת/פרוקסי
+ * (לא רק api.x.ai) - סביר וכולל, כי כל שאר תעבורת הרשת של האפליקציה (טעינת
+ * WEB_URL, בדיקת עדכונים) עוברת דרך אותו פרוקסי ארגוני בדיוק אם קיים.
+ * חייב לרוץ **לפני** app.whenReady() - מתג שורה-פקודה שננעל מוקדם.
+ */
+app.commandLine.appendSwitch("auth-server-whitelist", "*");
+app.commandLine.appendSwitch("auth-negotiate-delegate-whitelist", "*");
+
+/**
+ * רשת-ביטחון למקרה שהאימות האוטומטי למעלה לא חל (למשל פרוקסי עם Basic/
+ * Digest auth, לא NTLM/Kerberos) - בלי handler בכלל ל-'login', Electron
+ * פשוט ממתין **לצמיתות** לפרטי-התחברות שאף פעם לא יגיעו, מה שהיה בדיוק
+ * גורם לתקיעה השקטה שקדמה להוספת ה-timeout. עדיף להיכשל **מיד ובבירור**
+ * (מבטלים את הבקשה) מאשר להמתין שוב ל-45 שניות בלי שום מידע נוסף.
+ */
+app.on("login", (event, _webContents, _details, _authInfo, callback) => {
+  event.preventDefault();
+  console.warn("[main] בקשת אימות-פרוקסי/שרת שלא טופלה אוטומטית - מבטל מיד במקום להמתין ל-timeout.");
+  callback();
+});
+
+/**
  * ברירת המחדל היא האתר החי ב-Vercel. אפשר לדרוס בזמן פיתוח מקומי:
  *   AIOP_WEB_URL=http://localhost:3100 npm start
  */
