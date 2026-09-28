@@ -127,6 +127,34 @@ function extractJson(content: string): unknown {
   }
 }
 
+/** הצורה המינימלית המשותפת שאנחנו צריכים מ-Response - גם net.fetch (Electron/Chromium)
+ * וגם fetch הגלובלי (Node/undici) מקיימים אותה, למרות שהטיפוסים המלאים שלהם שונים. */
+interface MinimalFetchResponse {
+  ok: boolean;
+  status: number;
+  text(): Promise<string>;
+  json(): Promise<unknown>;
+}
+type FetchLike = (
+  url: string,
+  init: { method: string; headers: Record<string, string>; body: string; signal: AbortSignal },
+) => Promise<MinimalFetchResponse>;
+
+async function callXaiOnce(fetchImpl: FetchLike, url: string, apiKey: string, body: string): Promise<MinimalFetchResponse> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), AI_REQUEST_TIMEOUT_MS);
+  try {
+    return await fetchImpl(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+      body,
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 export async function requestNextAction(params: {
   apiKey: string;
   task: string;
@@ -138,47 +166,61 @@ export async function requestNextAction(params: {
   hasSavedCredentials: boolean;
   model?: string;
 }): Promise<GrokStepResult> {
-  // net.fetch (לא ה-fetch הגלובלי של Node) - רץ על מנוע הרשת של Chromium,
-  // בדיוק כמו חלון הדפדפן של האפליקציה - אז הוא יורש אוטומטית הגדרות proxy
-  // ברמת המערכת/רשת, בניגוד ל-fetch של Node שמתעלם מהן. זה מה שהסביר מקרה
-  // שבו שאר האפליקציה (שנטענת מ-Vercel דרך אותו חלון) עובדת אבל קריאות ה-AI
-  // נכשלות עם "fetch failed" - היו יוצאות ישירות בלי לעבור דרך פרוקסי נדרש.
-  const timeoutController = new AbortController();
-  const timeoutId = setTimeout(() => timeoutController.abort(), AI_REQUEST_TIMEOUT_MS);
-
-  let response: Awaited<ReturnType<typeof net.fetch>>;
-  try {
-    response = await net.fetch(`${XAI_BASE_URL}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${params.apiKey}`,
-      },
-      body: JSON.stringify({
-        model: params.model ?? DEFAULT_GROK_MODEL,
-        messages: [
-          { role: "system", content: SYSTEM_PROMPT },
+  const url = `${XAI_BASE_URL}/chat/completions`;
+  const body = JSON.stringify({
+    model: params.model ?? DEFAULT_GROK_MODEL,
+    messages: [
+      { role: "system", content: SYSTEM_PROMPT },
+      {
+        role: "user",
+        content: [
+          { type: "text", text: buildUserPrompt(params) },
           {
-            role: "user",
-            content: [
-              { type: "text", text: buildUserPrompt(params) },
-              {
-                type: "image_url",
-                image_url: { url: `data:image/png;base64,${params.screenshotBase64}` },
-              },
-            ],
+            type: "image_url",
+            image_url: { url: `data:image/png;base64,${params.screenshotBase64}` },
           },
         ],
-      }),
-      signal: timeoutController.signal,
-    });
-  } catch (err) {
-    if (err instanceof Error && err.name === "AbortError") {
-      throw new Error(`xai-timeout: לא התקבלה תגובה מ-xAI תוך ${AI_REQUEST_TIMEOUT_MS / 1000} שניות`);
+      },
+    ],
+  });
+
+  // net.fetch (לא ה-fetch הגלובלי של Node) - רץ על מנוע הרשת של Chromium, בדיוק
+  // כמו חלון הדפדפן של האפליקציה - אז הוא יורש אוטומטית הגדרות proxy ברמת
+  // המערכת/רשת. זה הנתיב הראשי.
+  let response: MinimalFetchResponse;
+  try {
+    response = await callXaiOnce(net.fetch as unknown as FetchLike, url, params.apiKey, body);
+  } catch (primaryErr) {
+    // **עדכון (2026-09-28) - נתיב-גיבוי, אחרי שתיקון קודם (auth-server-whitelist)
+    // לא פתר את ה-xai-timeout אצל המשתמש בפועל:** במקום לנחש שוב איזו הגדרת-
+    // רשת ספציפית חוסמת, מנסים נתיב רשת **שונה לגמרי** - fetch הגלובלי של Node
+    // (undici) - שרץ על מחסנית TLS/DNS/socket עצמאית לחלוטין מתהליך-הרשת של
+    // Chromium שנתקע. תוכנות אבטחה/EDR ארגוניות מטפלות לעיתים אחרת בתהליך-
+    // הרשת הנפרד של Chromium (utility process) לעומת קוד שרץ ישירות על תהליך
+    // Node הראשי - זה עשוי לעקוף חסימה שלא הצלחנו לאבחן במדויק. אם **שני**
+    // הנתיבים נכשלים, הודעת השגיאה כוללת מה בדיוק קרה בכל אחד מהם - ראיה
+    // מדויקת יותר לאבחון הבא, בלי לדרוש מהמשתמש להריץ בדיקות ידניות נפרדות.
+    const primaryDetail =
+      primaryErr instanceof Error && primaryErr.name === "AbortError"
+        ? `timeout אחרי ${AI_REQUEST_TIMEOUT_MS / 1000} שניות`
+        : primaryErr instanceof Error
+          ? primaryErr.message
+          : String(primaryErr);
+    console.warn(`[grok] נתיב הרשת הראשי (Chromium net.fetch) נכשל (${primaryDetail}) - מנסה נתיב חלופי (Node fetch).`);
+
+    try {
+      response = await callXaiOnce(globalThis.fetch as unknown as FetchLike, url, params.apiKey, body);
+    } catch (fallbackErr) {
+      const fallbackDetail =
+        fallbackErr instanceof Error && fallbackErr.name === "AbortError"
+          ? `timeout אחרי ${AI_REQUEST_TIMEOUT_MS / 1000} שניות`
+          : fallbackErr instanceof Error
+            ? fallbackErr.message
+            : String(fallbackErr);
+      throw new Error(
+        `xai-timeout: שני נתיבי הרשת ל-xAI נכשלו - הראשי (Chromium): ${primaryDetail}. החלופי (Node): ${fallbackDetail}.`,
+      );
     }
-    throw err;
-  } finally {
-    clearTimeout(timeoutId);
   }
 
   if (!response.ok) {
