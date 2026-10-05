@@ -2,6 +2,19 @@ import { app, BrowserWindow, screen, ipcMain, dialog, shell } from "electron";
 import { autoUpdater } from "electron-updater";
 import path from "node:path";
 import fs from "node:fs";
+import dns from "node:dns";
+
+/**
+ * **עדכון (2026-10-05)** - חשד נוסף ל-xai-timeout, ממחקר חיצוני: ב-Windows
+ * ארגוני, Node.js מנסה לעיתים resolve קודם ל-IPv6 (אם ה-DNS מחזיר רשומת
+ * AAAA) גם כשאין בפועל ניתוב IPv6 תקין ברשת הארגונית - "Happy Eyeballs"
+ * לא ממומש באופן מלא, אז הניסיון הראשוני נתקע בשקט לפני שחוזרים ל-IPv4.
+ * זה משפיע גם על undici (ה-fetch הגלובלי, נתיב-הגיבוי שנוסף ב-2026-09-28)
+ * וגם, בעקיפין, על רזולוציית-DNS שמשרתת את כל תהליך ה-Node. תיקון זול וללא
+ * סיכון: לכפות סדר-עדיפות IPv4-קודם באופן גלובלי. לא אומת שזו אכן הסיבה
+ * בפועל - זו תוספת-הגנה זולה לצד הבדיקות האחרות, לא תחליף לאבחון אמיתי.
+ */
+dns.setDefaultResultOrder("ipv4first");
 import {
   getXaiApiKey,
   hasXaiApiKey,
