@@ -1,6 +1,28 @@
 import { net } from "electron";
+import dns from "node:dns";
 
 const XAI_BASE_URL = "https://api.x.ai/v1";
+const XAI_HOSTNAME = "api.x.ai";
+
+/**
+ * **עדכון (2026-10-05) - טלמטריית-רשת, לפי המלצת מחקר חיצוני (Gate 0 §0.5-0.6):**
+ * עד עכשיו, "xai-timeout" היה כל המידע שקיבלנו - לא ידוע אם זה נתקע ב-DNS,
+ * ב-TCP connect, ב-TLS handshake, או בהמתנה לתשובה בפועל. זה הפך כל דיווח-
+ * כשל לניחוש נוסף. הפונקציה הזו מודדת ומדווחת רזולוציית-DNS בנפרד (זמן +
+ * איזו משפחת-כתובת נבחרה בפועל - IPv4 מול IPv6, ר' dns.setDefaultResultOrder
+ * ב-main.ts) **לפני** כל ניסיון - כדי שהודעת-השגיאה הבאה (אם תהיה) תכיל
+ * עובדות אבחוניות אמיתיות, לא רק "נכשל אחרי 45 שניות".
+ */
+async function diagnoseDns(): Promise<string> {
+  const start = Date.now();
+  try {
+    const result = await dns.promises.lookup(XAI_HOSTNAME, { verbatim: false });
+    return `DNS:${result.address}(IPv${result.family}, ${Date.now() - start}ms)`;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return `DNS-FAILED:${message}(${Date.now() - start}ms)`;
+  }
+}
 
 /**
  * מודל ברירת המחדל - Grok עם תמיכת Vision. אם xAI משנים שם/גרסת מודל, זה
@@ -187,7 +209,10 @@ export async function requestNextAction(params: {
   // net.fetch (לא ה-fetch הגלובלי של Node) - רץ על מנוע הרשת של Chromium, בדיוק
   // כמו חלון הדפדפן של האפליקציה - אז הוא יורש אוטומטית הגדרות proxy ברמת
   // המערכת/רשת. זה הנתיב הראשי.
+  const dnsDiag = await diagnoseDns();
+
   let response: MinimalFetchResponse;
+  const primaryStart = Date.now();
   try {
     response = await callXaiOnce(net.fetch as unknown as FetchLike, url, params.apiKey, body);
   } catch (primaryErr) {
@@ -198,27 +223,31 @@ export async function requestNextAction(params: {
     // Chromium שנתקע. תוכנות אבטחה/EDR ארגוניות מטפלות לעיתים אחרת בתהליך-
     // הרשת הנפרד של Chromium (utility process) לעומת קוד שרץ ישירות על תהליך
     // Node הראשי - זה עשוי לעקוף חסימה שלא הצלחנו לאבחן במדויק. אם **שני**
-    // הנתיבים נכשלים, הודעת השגיאה כוללת מה בדיוק קרה בכל אחד מהם - ראיה
-    // מדויקת יותר לאבחון הבא, בלי לדרוש מהמשתמש להריץ בדיקות ידניות נפרדות.
+    // הנתיבים נכשלים, הודעת השגיאה כוללת מה בדיוק קרה בכל אחד מהם, פלוס
+    // טלמטריית ה-DNS (ר' diagnoseDns למעלה) - ראיה מדויקת יותר לאבחון הבא,
+    // בלי לדרוש מהמשתמש להריץ בדיקות ידניות נפרדות.
+    const primaryElapsed = Date.now() - primaryStart;
     const primaryDetail =
       primaryErr instanceof Error && primaryErr.name === "AbortError"
-        ? `timeout אחרי ${AI_REQUEST_TIMEOUT_MS / 1000} שניות`
+        ? `timeout אחרי ${primaryElapsed}ms`
         : primaryErr instanceof Error
-          ? primaryErr.message
-          : String(primaryErr);
-    console.warn(`[grok] נתיב הרשת הראשי (Chromium net.fetch) נכשל (${primaryDetail}) - מנסה נתיב חלופי (Node fetch).`);
+          ? `${primaryErr.message} (${primaryElapsed}ms)`
+          : `${String(primaryErr)} (${primaryElapsed}ms)`;
+    console.warn(`[grok] ${dnsDiag} | נתיב הרשת הראשי (Chromium net.fetch) נכשל (${primaryDetail}) - מנסה נתיב חלופי (Node fetch).`);
 
+    const fallbackStart = Date.now();
     try {
       response = await callXaiOnce(globalThis.fetch as unknown as FetchLike, url, params.apiKey, body);
     } catch (fallbackErr) {
+      const fallbackElapsed = Date.now() - fallbackStart;
       const fallbackDetail =
         fallbackErr instanceof Error && fallbackErr.name === "AbortError"
-          ? `timeout אחרי ${AI_REQUEST_TIMEOUT_MS / 1000} שניות`
+          ? `timeout אחרי ${fallbackElapsed}ms`
           : fallbackErr instanceof Error
-            ? fallbackErr.message
-            : String(fallbackErr);
+            ? `${fallbackErr.message} (${fallbackElapsed}ms)`
+            : `${String(fallbackErr)} (${fallbackElapsed}ms)`;
       throw new Error(
-        `xai-timeout: שני נתיבי הרשת ל-xAI נכשלו - הראשי (Chromium): ${primaryDetail}. החלופי (Node): ${fallbackDetail}.`,
+        `xai-timeout: שני נתיבי הרשת ל-xAI נכשלו. ${dnsDiag} | הראשי (Chromium): ${primaryDetail}. החלופי (Node): ${fallbackDetail}.`,
       );
     }
   }

@@ -57,9 +57,15 @@ app.commandLine.appendSwitch("auth-negotiate-delegate-whitelist", "*");
  * גורם לתקיעה השקטה שקדמה להוספת ה-timeout. עדיף להיכשל **מיד ובבירור**
  * (מבטלים את הבקשה) מאשר להמתין שוב ל-45 שניות בלי שום מידע נוסף.
  */
-app.on("login", (event, _webContents, _details, _authInfo, callback) => {
+app.on("login", (event, _webContents, details, authInfo, callback) => {
   event.preventDefault();
-  console.warn("[main] בקשת אימות-פרוקסי/שרת שלא טופלה אוטומטית - מבטל מיד במקום להמתין ל-timeout.");
+  // עדכון (2026-10-05): פירוט מלא של האתגר שלא טופל אוטומטית - isProxy/scheme/
+  // host/port הם בדיוק המידע שצריך כדי להבדיל בין "פרוקסי עם Basic/Digest
+  // auth" (לא מכוסה ע"י auth-server-whitelist, ר' הערה למעלה) לבין "אתגר
+  // מהשרת היעד עצמו"; details.url מזהה בדיוק איזו בקשה נתקלה באתגר.
+  console.warn(
+    `[main] אתגר-אימות שלא טופל אוטומטית: isProxy=${authInfo.isProxy} scheme=${authInfo.scheme} host=${authInfo.host}:${authInfo.port} realm=${authInfo.realm ?? "-"} url=${details.url} - מבטל מיד במקום להמתין ל-timeout.`,
+  );
   callback();
 });
 
@@ -331,6 +337,15 @@ function getAgentStatus(): AgentStatus {
 }
 
 app.whenReady().then(() => {
+  // עדכון (2026-10-05) - אבחון-רשת (Gate 0 §0.6): מדווח איזה פרוקסי Electron
+  // בעצמו "חושב" שהוא צריך להשתמש בו כדי להגיע ל-xAI - שאלה שעד עכשיו לא
+  // הייתה לנו שום דרך לענות עליה בלי לבקש מהמשתמש לבדוק ידנית ברשת. אם זה
+  // מחזיר DIRECT אבל יש בפועל פרוקסי ארגוני ברשת - זה כשלעצמו ממצא חשוב.
+  void app
+    .resolveProxy("https://api.x.ai")
+    .then((proxy) => console.log(`[main] app.resolveProxy("https://api.x.ai") = "${proxy}"`))
+    .catch((err) => console.warn("[main] app.resolveProxy נכשל:", err));
+
   ipcMain.handle("aiop:get-app-version", () => app.getVersion());
 
   ipcMain.handle("aiop:get-connector-paths", () => readConnectorPaths());
