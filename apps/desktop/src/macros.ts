@@ -2,6 +2,7 @@ import { app } from "electron";
 import path from "node:path";
 import fs from "node:fs";
 import type { ComputerActionRequest } from "./ai/grok";
+import type { RiskClass } from "./safety/policy-engine";
 
 /**
  * "מאקרו" - רצף פעולות מוקלט מריצה מוצלחת קודמת של אותה משימה בדיוק (לפי
@@ -18,7 +19,12 @@ export interface MacroStep {
   /** תמיד הגרסה הסמלית (type_credential נשאר {"type":"type_credential",...}
    * בלי הערך האמיתי) - בדיוק כמו RunStepRecord.action. */
   action: ComputerActionRequest;
-  requiresApproval: boolean;
+  /** **עדכון (2026-10-05, Gate 1)**: היה requiresApproval (boolean שה-AI
+   * קבע ישירות). עכשיו נשמר riskClass - אותו ערך-סיווג שה-AI החזיר באותו
+   * צעד בזמן ההקלטה - וה-policy-engine (לא המאקרו) קובע מחדש, בכל שידור-
+   * חוזר, אם זה דורש אישור. כך ההגנה הדטרמיניסטית זהה לגמרי בין AI חי
+   * למאקרו, בלי נתיב-קוד נפרד. */
+  riskClass: RiskClass;
 }
 
 export interface Macro {

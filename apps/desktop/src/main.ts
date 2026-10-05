@@ -26,6 +26,7 @@ import {
 } from "./settings";
 import { runComputerUseTask, type TaskUpdateEvent } from "./task-runner";
 import type { ComputerActionRequest } from "./ai/grok";
+import type { RiskClass } from "./safety/policy-engine";
 import { saveRun, listRuns, getRun, findIncompleteRun } from "./run-history";
 import { getLearnedScreens, recordScreen } from "./screen-memory";
 import { isRetryableLoadFailure, nextReloadDelay } from "./window-reload";
@@ -286,6 +287,7 @@ let pendingApproval: {
   confidence: number;
   action: ComputerActionRequest;
   source: "ai" | "macro";
+  riskClass: RiskClass;
   resolve: (approved: boolean) => void;
 } | null = null;
 let pendingQuestion: { step: number; question: string; resolve: (answer: string) => void } | null = null;
@@ -310,6 +312,7 @@ interface AgentStatus {
     confidence: number;
     action: ComputerActionRequest;
     source: "ai" | "macro";
+    riskClass: RiskClass;
   } | null;
   pendingQuestion: { step: number; question: string } | null;
 }
@@ -330,6 +333,7 @@ function getAgentStatus(): AgentStatus {
           confidence: pendingApproval.confidence,
           action: pendingApproval.action,
           source: pendingApproval.source,
+          riskClass: pendingApproval.riskClass,
         }
       : null,
     pendingQuestion: pendingQuestion ? { step: pendingQuestion.step, question: pendingQuestion.question } : null,
@@ -427,9 +431,9 @@ app.whenReady().then(() => {
             focusMainWindow();
           }
         },
-        waitForApproval: (step, reasoning, confidence, action, source) =>
+        waitForApproval: (step, reasoning, confidence, action, source, riskClass) =>
           new Promise<boolean>((resolve) => {
-            pendingApproval = { step, reasoning, confidence, action, source, resolve };
+            pendingApproval = { step, reasoning, confidence, action, source, riskClass, resolve };
             focusMainWindow();
           }),
         waitForAnswer: (step, question) =>

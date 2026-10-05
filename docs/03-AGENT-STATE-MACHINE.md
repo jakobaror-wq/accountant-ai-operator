@@ -25,7 +25,7 @@ in-progress ──(step > MAX_STEPS)───────────► max-ste
 ## 3. תת-לולאה לכל צעד (בתוך `in-progress`)
 
 ```
-captureScreenshot() ──► requestNextActionWithRetry() ──► [ask? / requiresApproval? עוצר וממתין] ──► executeAction() ──► checkpoint()
+captureScreenshot() ──► requestNextActionWithRetry() ──► [ask? / riskClass דורש-אישור לפי policy-engine.ts? עוצר וממתין] ──► executeAction() ──► checkpoint()
 ```
 
 - `requestNextActionWithRetry` (ר' `01-ARCHITECTURE.md` §3) מנסה שוב עד `MAX_AI_RETRIES=2` פעמים, `AI_RETRY_DELAY_MS=1500`, **רק** על שגיאות חולפות (רשת/429/5xx) - שגיאת מפתח API (400/401) נכשלת מיד בלי retry.

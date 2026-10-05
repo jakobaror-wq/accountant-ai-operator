@@ -16,6 +16,10 @@ export type ComputerActionRequest =
   | { type: "ask"; question: string }
   | { type: "done"; summary: string };
 
+/** ר' apps/desktop/src/safety/policy-engine.ts - הסיווג הדטרמיניסטי שקובע
+ * אם צעד דורש אישור (עדכון 2026-10-05, Gate 1) - לא דעת ה-AI ישירות יותר. */
+export type RiskClass = "read-only" | "navigation" | "reversible-edit" | "external-side-effect" | "final-commit" | "unknown";
+
 export interface RunStepRecord {
   step: number;
   timestamp: string;
@@ -23,6 +27,7 @@ export interface RunStepRecord {
   screenLabel?: string;
   confidence?: number;
   action?: ComputerActionRequest;
+  riskClass?: RiskClass;
   requiresApproval?: boolean;
   decision?: "approved" | "rejected";
   outcome: "executed" | "rejected" | "stopped" | "failed" | "done" | "asked";
@@ -63,6 +68,7 @@ export type TaskUpdateEvent =
       confidence: number;
       action: ComputerActionRequest;
       source: "ai" | "macro";
+      riskClass: RiskClass;
     }
   | {
       type: "awaiting-approval";
@@ -71,6 +77,7 @@ export type TaskUpdateEvent =
       confidence: number;
       action: ComputerActionRequest;
       source: "ai" | "macro";
+      riskClass: RiskClass;
     }
   | { type: "awaiting-answer"; step: number; question: string }
   | { type: "rejected"; step: number }
@@ -103,6 +110,7 @@ export interface AgentStatus {
     confidence: number;
     action: ComputerActionRequest;
     source: "ai" | "macro";
+    riskClass: RiskClass;
   } | null;
   pendingQuestion: { step: number; question: string } | null;
 }

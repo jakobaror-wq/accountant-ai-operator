@@ -3,6 +3,7 @@ import { requestNextAction, CONFIDENCE_THRESHOLD, type HistoryEntry, type GrokSt
 import { getConnectorCredentials } from "./settings";
 import { getMacro, saveMacro, recordMacroReplay, recordMacroFallback, MACRO_REPLAY_ENABLED, type MacroStep } from "./macros";
 import { runIdFor } from "./run-history";
+import { requiresHumanApproval, type RiskClass } from "./safety/policy-engine";
 
 export interface RunStepRecord {
   step: number;
@@ -11,6 +12,14 @@ export interface RunStepRecord {
   screenLabel?: string;
   confidence?: number;
   action?: HistoryEntry["action"];
+  /** **עדכון (2026-10-05, Gate 1)**: הסיווג שה-AI החזיר - מקור-האמת לבדיקת
+   * requiresApproval (ר' safety/policy-engine.ts). נשמר ביומן הביקורת גם
+   * כשה-AI "טעה" (למשל ביצע reversible-edit על צעד שבדיעבד התברר קריטי) -
+   * כדי שאפשר יהיה לבדוק בדיעבד את איכות-הסיווג של המודל, לא רק את התוצאה. */
+  riskClass?: RiskClass;
+  /** נגזר דטרמיניסטית מ-riskClass דרך policy-engine.ts - **לא** מגיע ישירות
+   * מה-AI יותר (ר' עדכון 2026-10-05, Gate 1). נשאר boolean, לתאימות לאחור
+   * עם קוד/UI קיימים שכבר מצפים לשדה הזה. */
   requiresApproval?: boolean;
   decision?: "approved" | "rejected";
   outcome: "executed" | "rejected" | "stopped" | "failed" | "done" | "asked";
@@ -47,6 +56,8 @@ export type TaskUpdateEvent =
        * קריאה חיה ל-Grok. מוצג ב-UI כדי שאפשר יהיה לצפות/לאבחן את התכונה
        * שטרם אומתה בפועל - ר' docs/09-COMPUTER-USE-AGENT.md. */
       source: "ai" | "macro";
+      /** ר' safety/policy-engine.ts - הסיווג שקבע אם זה דרש אישור. */
+      riskClass: RiskClass;
     }
   | {
       type: "awaiting-approval";
@@ -59,6 +70,8 @@ export type TaskUpdateEvent =
        * הגיעה משידור-חוזר (עם confidence=1 מלאכותי, לא ציון אמון אמיתי -
        * ר' waitForApproval) ולא מ-AI חי שבדק את המסך הנוכחי. */
       source: "ai" | "macro";
+      /** ר' safety/policy-engine.ts - למה הקוד (לא ה-AI) דרש אישור כאן. */
+      riskClass: RiskClass;
     }
   | { type: "awaiting-answer"; step: number; question: string }
   | { type: "rejected"; step: number }
@@ -157,6 +170,7 @@ export async function runComputerUseTask(params: {
     confidence: number,
     action: HistoryEntry["action"],
     source: "ai" | "macro",
+    riskClass: RiskClass,
   ) => Promise<boolean>;
   waitForAnswer: (step: number, question: string) => Promise<string>;
   /** ממשיכים ריצה שהופסקה (קריסה/סגירה) במקום להתחיל מאפס ולסכן פעולה כפולה. */
@@ -255,7 +269,7 @@ export async function runComputerUseTask(params: {
           reasoning: macroStep.reasoning,
           screenLabel: macroStep.screenLabel,
           confidence: 1,
-          requiresApproval: macroStep.requiresApproval,
+          riskClass: macroStep.riskClass,
           action: macroStep.action,
         };
         usedMacro = true;
@@ -299,6 +313,13 @@ export async function runComputerUseTask(params: {
       ? next.action
       : scaleActionToRealScreen(next.action, screenshot.realWidth / screenshot.width, screenshot.realHeight / screenshot.height);
 
+    // **עדכון (2026-10-05, Gate 1)**: approvalNeeded הוא הפלט היחיד של הקוד
+    // הדטרמיניסטי (safety/policy-engine.ts) - מחליף את next.requiresApproval
+    // הישן (שה-AI קבע ישירות). מחושב פעם אחת כאן, לפני ה-onUpdate הראשון של
+    // הצעד הזה, ומשמש בכל מקום למטה - אין עוד נתיב-קוד שמסתכל על דעת ה-AI
+    // לגבי "האם צריך אישור" ישירות.
+    const approvalNeeded = requiresHumanApproval(next.riskClass);
+
     params.onUpdate({
       type: "action",
       step,
@@ -307,6 +328,7 @@ export async function runComputerUseTask(params: {
       confidence: next.confidence,
       action: next.action,
       source: usedMacro ? "macro" : "ai",
+      riskClass: next.riskClass,
     });
 
     if (next.action.type === "done") {
@@ -317,6 +339,7 @@ export async function runComputerUseTask(params: {
         screenLabel: next.screenLabel,
         confidence: next.confidence,
         action: next.action,
+        riskClass: next.riskClass,
         requiresApproval: false,
         outcome: "done",
       });
@@ -360,6 +383,7 @@ export async function runComputerUseTask(params: {
         screenLabel: next.screenLabel,
         confidence: next.confidence,
         action: { type: "ask", question: next.action.question },
+        riskClass: next.riskClass,
         requiresApproval: false,
         outcome: "asked",
       });
@@ -368,9 +392,11 @@ export async function runComputerUseTask(params: {
       continue;
     }
 
-    // רק פעולות שמשנות נתון בתוך התוכנה דורשות אישור אנושי מפורש - שאיבת מידע,
-    // ניווט וייצוא קבצים זורמים חופשי (ר' דרישה מפורשת + criteria ב-grok.ts).
-    if (next.requiresApproval) {
+    // **עדכון (2026-10-05, Gate 1)**: approvalNeeded (לעיל) הוא קוד דטרמיניסטי,
+    // לא דעת ה-AI - זה בדיוק הגרעין-הבטיחותי שנדרש: גם אם המודל "חשב" שזו
+    // פעולה בטוחה, אם ה-riskClass שהוא עצמו דיווח ממופה ב-policy-engine
+    // לדרישת-אישור, אין דרך לעקוף את זה מכאן.
+    if (approvalNeeded) {
       const approvalSource = usedMacro ? "macro" : "ai";
       params.onUpdate({
         type: "awaiting-approval",
@@ -379,8 +405,9 @@ export async function runComputerUseTask(params: {
         confidence: next.confidence,
         action: next.action,
         source: approvalSource,
+        riskClass: next.riskClass,
       });
-      const approved = await params.waitForApproval(step, next.reasoning, next.confidence, next.action, approvalSource);
+      const approved = await params.waitForApproval(step, next.reasoning, next.confidence, next.action, approvalSource, next.riskClass);
 
       if (params.shouldStop()) {
         steps.push({
@@ -390,6 +417,7 @@ export async function runComputerUseTask(params: {
           screenLabel: next.screenLabel,
           confidence: next.confidence,
           action: next.action,
+          riskClass: next.riskClass,
           requiresApproval: true,
           decision: approved ? "approved" : "rejected",
           outcome: "stopped",
@@ -406,6 +434,7 @@ export async function runComputerUseTask(params: {
           screenLabel: next.screenLabel,
           confidence: next.confidence,
           action: next.action,
+          riskClass: next.riskClass,
           requiresApproval: true,
           decision: "rejected",
           outcome: "rejected",
@@ -433,6 +462,7 @@ export async function runComputerUseTask(params: {
           screenLabel: next.screenLabel,
           confidence: next.confidence,
           action: actionToExecute,
+          riskClass: next.riskClass,
           requiresApproval: false,
           outcome: "failed",
           error: message,
@@ -455,8 +485,9 @@ export async function runComputerUseTask(params: {
         screenLabel: next.screenLabel,
         confidence: next.confidence,
         action: next.action,
-        requiresApproval: next.requiresApproval,
-        decision: next.requiresApproval ? "approved" : undefined,
+        riskClass: next.riskClass,
+        requiresApproval: approvalNeeded,
+        decision: approvalNeeded ? "approved" : undefined,
         outcome: "failed",
         error: message,
       });
@@ -472,8 +503,9 @@ export async function runComputerUseTask(params: {
       screenLabel: next.screenLabel,
       confidence: next.confidence,
       action: next.action,
-      requiresApproval: next.requiresApproval,
-      decision: next.requiresApproval ? "approved" : undefined,
+      riskClass: next.riskClass,
+      requiresApproval: approvalNeeded,
+      decision: approvalNeeded ? "approved" : undefined,
       outcome: "executed",
       source: usedMacro ? "macro" : "ai",
     });
@@ -489,7 +521,7 @@ export async function runComputerUseTask(params: {
         referenceThumbnail: stepThumbnail,
         reasoning: next.reasoning,
         action: next.action,
-        requiresApproval: next.requiresApproval,
+        riskClass: next.riskClass,
       });
     }
 

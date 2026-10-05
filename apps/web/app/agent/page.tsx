@@ -17,7 +17,19 @@ interface PendingApproval {
   confidence: number;
   actionLabel: string;
   source: "ai" | "macro";
+  /** ר' apps/desktop/src/safety/policy-engine.ts - הקטגוריה שגרמה לקוד
+   * (לא ל-AI) לדרוש אישור כאן (עדכון 2026-10-05, Gate 1). */
+  riskClass: "read-only" | "navigation" | "reversible-edit" | "external-side-effect" | "final-commit" | "unknown";
 }
+
+const RISK_CLASS_LABELS: Record<PendingApproval["riskClass"], string> = {
+  "read-only": "קריאה בלבד",
+  navigation: "ניווט",
+  "reversible-edit": "עריכה הפיכה",
+  "external-side-effect": "ייצוא/יצירת קובץ",
+  "final-commit": "שינוי סופי בתוכנה",
+  unknown: "לא מסווג - נעצר כברירת מחדל בטוחה",
+};
 
 interface PendingQuestion {
   step: number;
@@ -119,6 +131,7 @@ export default function AgentPage() {
           confidence: status.pendingApproval.confidence,
           actionLabel: describeAction(status.pendingApproval.action),
           source: status.pendingApproval.source,
+          riskClass: status.pendingApproval.riskClass,
         });
       }
       if (status.pendingQuestion) {
@@ -158,6 +171,7 @@ export default function AgentPage() {
             confidence: event.confidence,
             actionLabel: describeAction(event.action),
             source: event.source,
+            riskClass: event.riskClass,
           });
           break;
         case "awaiting-answer":
@@ -659,6 +673,13 @@ export default function AgentPage() {
                   </span>
                 )}
               </div>
+              {/* **עדכון (2026-10-05, Gate 1)**: זו לא דעת ה-AI יותר - זו הסיבה
+                  הדטרמיניסטית (ר' apps/desktop/src/safety/policy-engine.ts)
+                  שבגללה הקוד, לא המודל, עצר כאן. חשוב שהמשתמש יראה את זה
+                  במפורש - זה בדיוק הגרעין-הבטיחותי של המערכת, שקוף ולא עיוור. */}
+              <p className="mt-1 text-xs font-medium text-amber-700">
+                סיווג: {RISK_CLASS_LABELS[pendingApproval.riskClass]}
+              </p>
               <p className="mt-1 text-sm text-amber-900">{pendingApproval.reasoning}</p>
               <p className="mt-2 text-sm font-medium text-amber-900">
                 הפעולה המוצעת: {pendingApproval.actionLabel}
