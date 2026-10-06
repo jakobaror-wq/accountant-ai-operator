@@ -95,6 +95,10 @@ export default function AgentPage() {
   const [log, setLog] = useState<LogLine[]>([]);
   const [latestScreenshot, setLatestScreenshot] = useState<string | null>(null);
   const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null);
+  // **עדכון (2026-10-06)**: מוצג רק כש-riskClass הוא external-side-effect
+  // (ייצוא/הדפסה) - הקוד ב-main.ts מתעלם מהדגל הזה על כל קטגוריה אחרת בלי
+  // קשר למה שה-UI שולח, אבל אין טעם להציע למשתמש אפשרות שלא תכובד בפועל.
+  const [autoApproveChecked, setAutoApproveChecked] = useState(false);
   const [pendingQuestion, setPendingQuestion] = useState<PendingQuestion | null>(null);
   const [answerInput, setAnswerInput] = useState("");
   const [historyRefresh, setHistoryRefresh] = useState(0);
@@ -133,6 +137,7 @@ export default function AgentPage() {
           source: status.pendingApproval.source,
           riskClass: status.pendingApproval.riskClass,
         });
+        setAutoApproveChecked(false);
       }
       if (status.pendingQuestion) {
         setPendingQuestion({ step: status.pendingQuestion.step, question: status.pendingQuestion.question });
@@ -173,6 +178,7 @@ export default function AgentPage() {
             source: event.source,
             riskClass: event.riskClass,
           });
+          setAutoApproveChecked(false);
           break;
         case "awaiting-answer":
           setPendingQuestion({ step: event.step, question: event.question });
@@ -372,10 +378,10 @@ export default function AgentPage() {
     await window.electronAPI.stopTask();
   }
 
-  async function handleApprove() {
+  async function handleApprove(autoApproveRestOfRun?: boolean) {
     if (!window.electronAPI) return;
     setPendingApproval(null);
-    await window.electronAPI.approveAction();
+    await window.electronAPI.approveAction(autoApproveRestOfRun);
   }
 
   async function handleReject() {
@@ -700,10 +706,24 @@ export default function AgentPage() {
               <p className="mt-2 text-sm font-medium text-amber-900">
                 הפעולה המוצעת: {pendingApproval.actionLabel}
               </p>
+              {/* **עדכון (2026-10-06)** - מענה ל"עייפות-אישורים": מוצג רק עבור
+                  external-side-effect (ייצוא/הדפסה חוזרים) - לעולם לא עבור
+                  final-commit/unknown, ר' safety/policy-engine.ts
+                  (canAutoApproveForRestOfRun) שגם אוכף את זה בפועל ב-main.ts. */}
+              {pendingApproval.riskClass === "external-side-effect" && (
+                <label className="mt-2 flex items-center gap-2 text-xs text-amber-800">
+                  <input
+                    type="checkbox"
+                    checked={autoApproveChecked}
+                    onChange={(e) => setAutoApproveChecked(e.target.checked)}
+                  />
+                  אשר אוטומטית פעולות ייצוא/הדפסה דומות להמשך הריצה הזו
+                </label>
+              )}
               <div className="mt-3 flex gap-2">
                 <button
                   type="button"
-                  onClick={handleApprove}
+                  onClick={() => handleApprove(autoApproveChecked)}
                   className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
                 >
                   אשר
