@@ -132,7 +132,10 @@ interface ElectronAPI {
 
   runTask(task: string, connectorId: string, resumeRunId?: string): Promise<RunTaskResult>;
   stopTask(): Promise<boolean>;
-  approveAction(): Promise<boolean>;
+  /** autoApproveRestOfRun: ר' apps/desktop/src/safety/policy-engine.ts
+   * (canAutoApproveForRestOfRun) - נאכף בצד ה-main, לא כאן - מתעלם אם
+   * ה-riskClass הנוכחי לא ברשימה המותרת (external-side-effect בלבד). */
+  approveAction(autoApproveRestOfRun?: boolean): Promise<boolean>;
   rejectAction(): Promise<boolean>;
   answerQuestion(answer: string): Promise<boolean>;
   listRuns(): Promise<StoredRunRecord[]>;

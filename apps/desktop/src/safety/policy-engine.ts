@@ -59,6 +59,27 @@ export function requiresHumanApproval(riskClass: RiskClass): boolean {
   return !AUTO_APPROVE_RISK_CLASSES.has(riskClass);
 }
 
+/**
+ * **עדכון (2026-10-06) - מענה מצומצם ובטוח ל"עייפות-אישורים" (§4 בתוכנית-
+ * העבודה החיצונית):** משימה שמייצאת 10 דוחות ברצף דורשת היום 10 אישורים
+ * נפרדים לאותה פעולה בדיוק - חיכוך אמיתי. הפתרון: המשתמש יכול לסמן "אשר
+ * פעולות מהסוג הזה אוטומטית להמשך הריצה" **בפעם הראשונה** שהוא מאשר צעד.
+ *
+ * **קריטי לבטיחות**: זה מותר **רק** ל-`external-side-effect` (ייצוא/הדפסה -
+ * סיכון נמוך, הפיך, לא משנה נתון בתוכנה) - **לעולם לא** ל-`final-commit`
+ * או `unknown`. זו בדיוק ההבחנה שחייבת להישמר: "אשר פעם, סמוך על השאר"
+ * מקובל על ייצוא קובץ; הוא **אסור** על שינוי-נתון-פיננסי-בלתי-הפיך, אחרת
+ * הגרעין הבטיחותי של Gate 1 (safety/policy-engine.ts) מתרוקן מתוכן בדיוק
+ * במקום שהכי קריטי להגן עליו. זו רשימה-מותרת נפרדת ומכוונת, לא נגזרת
+ * אוטומטית מ-`requiresHumanApproval` - גם אם מישהו ישנה את הקריאה ל-
+ * הפונקציה הזו בטעות, היא עדיין מחזירה false עבור final-commit/unknown.
+ */
+const AUTO_APPROVE_FOR_REST_OF_RUN_ALLOWED: ReadonlySet<RiskClass> = new Set<RiskClass>(["external-side-effect"]);
+
+export function canAutoApproveForRestOfRun(riskClass: RiskClass): boolean {
+  return AUTO_APPROVE_FOR_REST_OF_RUN_ALLOWED.has(riskClass);
+}
+
 export function isValidRiskClass(value: unknown): value is RiskClass {
   return typeof value === "string" && (ALL_RISK_CLASSES as readonly string[]).includes(value);
 }

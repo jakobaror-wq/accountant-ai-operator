@@ -288,12 +288,12 @@ let pendingApproval: {
   action: ComputerActionRequest;
   source: "ai" | "macro";
   riskClass: RiskClass;
-  resolve: (approved: boolean) => void;
+  resolve: (result: { approved: boolean; autoApproveRestOfRun?: boolean }) => void;
 } | null = null;
 let pendingQuestion: { step: number; question: string; resolve: (answer: string) => void } | null = null;
 
-function resolvePendingApproval(approved: boolean): void {
-  pendingApproval?.resolve(approved);
+function resolvePendingApproval(approved: boolean, autoApproveRestOfRun?: boolean): void {
+  pendingApproval?.resolve({ approved, autoApproveRestOfRun });
   pendingApproval = null;
 }
 
@@ -432,7 +432,7 @@ app.whenReady().then(() => {
           }
         },
         waitForApproval: (step, reasoning, confidence, action, source, riskClass) =>
-          new Promise<boolean>((resolve) => {
+          new Promise<{ approved: boolean; autoApproveRestOfRun?: boolean }>((resolve) => {
             pendingApproval = { step, reasoning, confidence, action, source, riskClass, resolve };
             focusMainWindow();
           }),
@@ -470,9 +470,9 @@ app.whenReady().then(() => {
 
   ipcMain.handle("aiop:get-incomplete-run", (_event, connectorId: string) => findIncompleteRun(connectorId));
 
-  ipcMain.handle("aiop:approve-action", () => {
+  ipcMain.handle("aiop:approve-action", (_event, autoApproveRestOfRun?: boolean) => {
     if (!pendingApproval) return false;
-    resolvePendingApproval(true);
+    resolvePendingApproval(true, autoApproveRestOfRun);
     return true;
   });
 

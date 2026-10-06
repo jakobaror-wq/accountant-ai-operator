@@ -143,7 +143,8 @@ const electronAPI = {
   runTask: (task: string, connectorId: string, resumeRunId?: string): Promise<RunTaskResult> =>
     ipcRenderer.invoke("aiop:run-task", task, connectorId, resumeRunId),
   stopTask: (): Promise<boolean> => ipcRenderer.invoke("aiop:stop-task"),
-  approveAction: (): Promise<boolean> => ipcRenderer.invoke("aiop:approve-action"),
+  approveAction: (autoApproveRestOfRun?: boolean): Promise<boolean> =>
+    ipcRenderer.invoke("aiop:approve-action", autoApproveRestOfRun),
   rejectAction: (): Promise<boolean> => ipcRenderer.invoke("aiop:reject-action"),
   answerQuestion: (answer: string): Promise<boolean> => ipcRenderer.invoke("aiop:answer-question", answer),
   listRuns: (): Promise<StoredRunRecord[]> => ipcRenderer.invoke("aiop:list-runs"),

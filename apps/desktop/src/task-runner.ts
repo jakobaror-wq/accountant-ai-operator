@@ -3,7 +3,7 @@ import { requestNextAction, CONFIDENCE_THRESHOLD, type HistoryEntry, type GrokSt
 import { getConnectorCredentials } from "./settings";
 import { getMacro, saveMacro, recordMacroReplay, recordMacroFallback, MACRO_REPLAY_ENABLED, type MacroStep } from "./macros";
 import { runIdFor } from "./run-history";
-import { requiresHumanApproval, type RiskClass } from "./safety/policy-engine";
+import { requiresHumanApproval, canAutoApproveForRestOfRun, type RiskClass } from "./safety/policy-engine";
 import { appendAuditEvent } from "./db";
 
 export interface RunStepRecord {
@@ -172,7 +172,12 @@ export async function runComputerUseTask(params: {
     action: HistoryEntry["action"],
     source: "ai" | "macro",
     riskClass: RiskClass,
-  ) => Promise<boolean>;
+    /** **עדכון (2026-10-06)**: `approved` כמו קודם; `autoApproveRestOfRun`
+     * (אופציונלי, ברירת מחדל false) - המשתמש ביקש לאשר אוטומטית פעולות
+     * מאותו riskClass להמשך הריצה. הקוד כאן מכבד את זה **רק** אם
+     * canAutoApproveForRestOfRun (policy-engine.ts) מתיר - גם אם ה-caller
+     * (main.ts/UI) ישלח true בטעות על קטגוריה אסורה, זה יתעלם מכך. */
+  ) => Promise<{ approved: boolean; autoApproveRestOfRun?: boolean }>;
   waitForAnswer: (step: number, question: string) => Promise<string>;
   /** ממשיכים ריצה שהופסקה (קריסה/סגירה) במקום להתחיל מאפס ולסכן פעולה כפולה. */
   resumeFrom?: { startedAt: string; steps: RunStepRecord[] };
@@ -199,6 +204,12 @@ export async function runComputerUseTask(params: {
   // כבר גורם ל-macro=null למעלה, אבל learningEligible גם חוסך את חישוב
   // התמונונת המיותר על ריצת-המשך שממילא לעולם לא תישמר כמאקרו.
   const learningEligible = !params.resumeFrom && MACRO_REPLAY_ENABLED;
+
+  // **עדכון (2026-10-06)**: ר' הערה מפורטת ב-safety/policy-engine.ts
+  // (canAutoApproveForRestOfRun) - נאכלס רק אם המשתמש סימן זאת במפורש
+  // בכרטיס-אישור, ורק עבור riskClass שמותר בקוד (external-side-effect
+  // בלבד כרגע) - מתאפס אוטומטית בכל ריצה חדשה (לא נשמר בין ריצות).
+  const autoApprovedRiskClasses = new Set<RiskClass>();
 
   function finish(status: RunRecord["status"], summary?: string): void {
     // רק מצבים סופיים נכנסים ליומן-השרשרת (לא "in-progress" - finish נקרא
@@ -405,63 +416,92 @@ export async function runComputerUseTask(params: {
     // לדרישת-אישור, אין דרך לעקוף את זה מכאן.
     if (approvalNeeded) {
       const approvalSource = usedMacro ? "macro" : "ai";
-      params.onUpdate({
-        type: "awaiting-approval",
-        step,
-        reasoning: next.reasoning,
-        confidence: next.confidence,
-        action: next.action,
-        source: approvalSource,
-        riskClass: next.riskClass,
-      });
-      const approved = await params.waitForApproval(step, next.reasoning, next.confidence, next.action, approvalSource, next.riskClass);
 
-      if (params.shouldStop()) {
-        steps.push({
+      // **עדכון (2026-10-06)** - ר' הערה ליד autoApprovedRiskClasses למעלה:
+      // אם המשתמש כבר ביקש במפורש "אשר אוטומטית להמשך הריצה" על הקטגוריה
+      // הזו (ורק עבור קטגוריה שמותר לה בכלל, ר' canAutoApproveForRestOfRun),
+      // מדלגים על הנחת-החסימה ועל ה-prompt - אבל עדיין רושמים את ההחלטה
+      // כ"auto-approved", לא סתם "approved", כדי שיומן הביקורת ישקף במדויק
+      // שאף בן-אדם לא ראה את הצעד הספציפי הזה.
+      if (autoApprovedRiskClasses.has(next.riskClass)) {
+        appendAuditEvent("approval-auto-granted", {
+          connectorId: params.connectorId,
+          task: params.task,
           step,
-          timestamp: new Date().toISOString(),
+          riskClass: next.riskClass,
           reasoning: next.reasoning,
-          screenLabel: next.screenLabel,
+          action: next.action,
+        });
+      } else {
+        params.onUpdate({
+          type: "awaiting-approval",
+          step,
+          reasoning: next.reasoning,
           confidence: next.confidence,
           action: next.action,
+          source: approvalSource,
           riskClass: next.riskClass,
-          requiresApproval: true,
-          decision: approved ? "approved" : "rejected",
-          outcome: "stopped",
         });
-        params.onUpdate({ type: "stopped" });
-        finish("stopped");
-        return;
-      }
-      if (!approved) {
-        steps.push({
+        const { approved, autoApproveRestOfRun } = await params.waitForApproval(
           step,
-          timestamp: new Date().toISOString(),
-          reasoning: next.reasoning,
-          screenLabel: next.screenLabel,
-          confidence: next.confidence,
-          action: next.action,
-          riskClass: next.riskClass,
-          requiresApproval: true,
-          decision: "rejected",
-          outcome: "rejected",
-        });
-        params.onUpdate({ type: "rejected", step });
-        finish("rejected");
-        return;
-      }
+          next.reasoning,
+          next.confidence,
+          next.action,
+          approvalSource,
+          next.riskClass,
+        );
 
-      // אושר בפועל - נכנס ליומן-השרשרת (ר' db.ts) כאירוע-בטיחות קריטי נפרד
-      // מיומן-הצעדים הרגיל: זה בדיוק הרגע שבו אדם אישר במפורש פעולה
-      // שהקוד (לא ה-AI) קבע שדורשת אישור - שווה תיעוד-נפרד שעמיד לשינוי.
-      appendAuditEvent("approval-granted", {
-        connectorId: params.connectorId,
-        task: params.task,
-        step,
-        riskClass: next.riskClass,
-        reasoning: next.reasoning,
-        action: next.action,
-      });
+        if (params.shouldStop()) {
+          steps.push({
+            step,
+            timestamp: new Date().toISOString(),
+            reasoning: next.reasoning,
+            screenLabel: next.screenLabel,
+            confidence: next.confidence,
+            action: next.action,
+            riskClass: next.riskClass,
+            requiresApproval: true,
+            decision: approved ? "approved" : "rejected",
+            outcome: "stopped",
+          });
+          params.onUpdate({ type: "stopped" });
+          finish("stopped");
+          return;
+        }
+        if (!approved) {
+          steps.push({
+            step,
+            timestamp: new Date().toISOString(),
+            reasoning: next.reasoning,
+            screenLabel: next.screenLabel,
+            confidence: next.confidence,
+            action: next.action,
+            riskClass: next.riskClass,
+            requiresApproval: true,
+            decision: "rejected",
+            outcome: "rejected",
+          });
+          params.onUpdate({ type: "rejected", step });
+          finish("rejected");
+          return;
+        }
+
+        if (autoApproveRestOfRun && canAutoApproveForRestOfRun(next.riskClass)) {
+          autoApprovedRiskClasses.add(next.riskClass);
+        }
+
+        // אושר בפועל - נכנס ליומן-השרשרת (ר' db.ts) כאירוע-בטיחות קריטי נפרד
+        // מיומן-הצעדים הרגיל: זה בדיוק הרגע שבו אדם אישר במפורש פעולה
+        // שהקוד (לא ה-AI) קבע שדורשת אישור - שווה תיעוד-נפרד שעמיד לשינוי.
+        appendAuditEvent("approval-granted", {
+          connectorId: params.connectorId,
+          task: params.task,
+          step,
+          riskClass: next.riskClass,
+          reasoning: next.reasoning,
+          action: next.action,
+        });
+      }
     }
 
     // "type_credential" הוא פעולה סמלית - הערך האמיתי (סיסמה/שם משתמש) לעולם
