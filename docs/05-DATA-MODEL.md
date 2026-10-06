@@ -4,7 +4,9 @@
 
 ## 1. עקרון: קבצים מקומיים, לא סכמת DB עם RLS
 
-אין Multi-tenancy, אין `office_id`, אין RLS - זו החלטה מפורשת (ר' `07-ASSUMPTIONS-OPEN-QUESTIONS.md` §3.1): **מחשב לוקאלי יחיד**, לא ריבוי-משתמשים. כל נתון שמור בקובץ JSON או קובץ מוצפן בתיקיית `userData` של Electron - אין DB, אין Auth, אין רשת מעורבת בשמירה/קריאה של אף אחד מהם.
+אין Multi-tenancy, אין `office_id`, אין RLS - זו החלטה מפורשת (ר' `07-ASSUMPTIONS-OPEN-QUESTIONS.md` §3.1): **מחשב לוקאלי יחיד**, לא ריבוי-משתמשים. כל נתון שמור בקובץ JSON או קובץ מוצפן בתיקיית `userData` של Electron - אין Auth, אין רשת מעורבת בשמירה/קריאה של אף אחד מהם.
+
+**עדכון (2026-10-06)**: נוסף `db.ts` - DB מקומי יחיד מבוסס **SQLite** (`better-sqlite3`, קובץ `aiop.db` באותה תיקיית `userData`), **לא** Supabase/ענן ולא שינוי בעיקרון "מחשב לוקאלי יחיד". זה **לא** הסכמה המלאה (`office`/`tax_year`/`workflow_run`/`approval_package`) שתוכננה במקור - זו החלטה מכוונת, לא פער: תוכנית-העבודה החיצונית שהנחתה את התוספת הזו הזהירה בעצמה מפני over-engineering לפני שהוכח Connector אמיתי אחד. מה שכן נבנה, ר' §9 למטה. קובצי ה-JSON הקיימים (`runs/*.json`, `screens.json`, `macros.json`, `settings.enc`) **לא** הוחלפו - ה-SQLite הוא תוספת, לא מיגרציה.
 
 ## 2. `settings.enc` - מפתח API ופרטי התחברות (מוצפן)
 
@@ -96,16 +98,34 @@ interface Macro {
 
 מנוהל ב-`apps/desktop/src/main.ts` (`readConnectorPaths`/`writeConnectorPaths`). מיפוי פשוט `Record<connectorId, absolutePath>` - הנתיב לקובץ ה-`.exe` (או מה שנבחר/נגרר) של כל תוכנה. לא מוצפן (לא נתון רגיש) - רק מקומי.
 
-## 6. אין שכבות זיכרון היררכיות (office/client/tax_year)
+## 6. זיכרון היררכי - עדיין **לא** office/tax_year/workflow מלא, אבל יש התחלה (עדכון 2026-10-06)
 
-בניגוד לתכנון המקורי - אין היום שום זיכרון בסקופ של "משרד"/"לקוח"/"שנת מס"/"Workflow". הזיכרון היחיד הוא `screens.json` לפי connector (סעיף 4). אם בעתיד יידרש הקשר ברמת לקוח/שנה, זו תוספת חדשה, לא הרחבה של מנגנון קיים.
+בניגוד לתכנון המקורי - אין היום זיכרון ברמת "משרד"/"שנת מס"/"Workflow". אבל יש כעת **זיכרון מינימלי ברמת לקוח** (ר' §9 - `clients`/`client_facts` ב-`db.ts`) - **בכוונה מצומצם**: כל עובדה דורשת `source` מפורש (`human-confirmed` לעומת `ai-suggested`), ושום קוד קיים (`task-runner.ts`) עדיין לא **צורך** את הטבלה הזו בפועל - זו תשתית מוכנה להמשך, לא שינוי בהתנהגות הסוכן. `screens.json` (סעיף 4) נשאר בדיוק כפי שהיה - רמז-שם לפי connector, לא קשור לזיכרון-לקוח.
 
-## 7. אין Decision Log / Approval Package נפרדים
+## 7. אין Decision Log / Approval Package נפרדים - אבל יש יומן-שרשרת לאירועי-בטיחות (עדכון 2026-10-06)
 
 אין טבלת `decision` נפרדת עם `alternatives`/`rationale`/`confidence` לכל החלטה - ה-`reasoning` וה-`confidence` שכבר קיימים בכל `RunStepRecord` (סעיף 3) הם כל מה שנשמר. אין `approval_package`/`approval_item`/`exception` נפרדים - אישור/דחייה הם רק שדה `decision` על הצעד עצמו.
+
+**מה שכן נוסף**: `audit_events` ב-`db.ts` - יומן **tamper-evident** (שרשרת hash, `SHA256(prevHash + אירוע)`) לאירועי-בטיחות קריטיים (`approval-granted`, `run-finished`) - נכתב מ-`task-runner.ts` **בנוסף** ליומן-הצעדים הרגיל (`run-history.ts`), לא במקומו. `verifyAuditChain()` מאפשרת לבדוק בדיעבד ששום אירוע לא נערך/נמחק בלי לשבור את השרשרת - **לא** "בלתי ניתן לשינוי" (מי שיש לו גישה ישירה לקובץ ה-DB יכול לשכתב הכול מההתחלה), רק tamper-**evident**.
 
 ## 8. מה עדיין פתוח
 
 - אין עדיין מנגנון ניקוי/pruning ליומן הביקורת - הוא גדל לצמיתות (ר' `docs/07-ASSUMPTIONS-OPEN-QUESTIONS.md` לשאלת מדיניות שימור נתונים).
 - ~~אין עדיין "מאקרו" שממפה רצף פעולות שכבר בוצע לביצוע חוזר בלי קריאת AI~~ **קיים כעת** (ר' סעיף 4א למעלה) - טרם אומת בפועל מול תוכנה אמיתית.
+
+## 9. `aiop.db` - SQLite מקומי (עדכון 2026-10-06)
+
+מנוהל ב-`apps/desktop/src/db.ts`. קובץ SQLite יחיד (`better-sqlite3`) בתיקיית `userData`, שלוש טבלאות בלבד (ר' הבהרה ב-§1 למעלה למה לא יותר):
+
+```ts
+interface Client { id: string; name: string; createdAt: string; }
+interface ClientFact {
+  id: string; clientId: string; key: string; value: string;
+  source: "human-confirmed" | "ai-suggested";  // קריטי - ר' הערה ב-db.ts
+  createdAt: string; createdBy?: string; validFrom?: string; confidence?: number;
+}
+interface AuditEvent { seq: number; timestamp: string; type: string; payload: unknown; prevHash: string; hash: string; }
+```
+
+**הערת-תשתית חשובה (native dependency)**: `better-sqlite3` הוא תוסף-Native, ולכן חייב את גרסת-ABI המדויקת של ה-Node המובנה בתוך Electron (לא ה-Node של המערכת) - גרסה v13 ומעלה של הספרייה דורשת Node 22+ ואינה תואמת לגמרי; Electron 33 מגיע עם Node 20.18 (ABI 130), ולכן ננעלה גרסה `^11.10.0` (תואמת). `package.json` כולל `"postinstall": "electron-builder install-app-deps"` - מריץ אוטומטית rebuild/הורדת-prebuild מתאים ל-ABI הנכון בכל `npm install`, בדיוק כמו `@nut-tree-fork/nut-js` - בלי זה, `npm install` רגיל היה מתקין בניין המיועד ל-Node של המערכת, וקריסה (SIGSEGV) בזמן טעינה בתוך Electron בפועל.
 </content>

@@ -5,12 +5,14 @@
   "description": "Accountant AI Operator - Desktop Companion. חלון שולחן-עבודה שטוען את האתר (Vercel) ומוסיף שתי יכולות מקומיות: בחירת קובץ הפעלה בלחיצה, והפעלת תוכנה מותקנת.",
   "main": "dist/main.js",
   "scripts": {
+    "postinstall": "electron-builder install-app-deps",
     "build": "tsc -p tsconfig.json",
     "start": "npm run build && electron .",
     "dist:linux": "npm run build && electron-builder --linux --publish never",
     "dist:win": "npm run build && electron-builder --win --publish never"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^20.19.23",
     "electron": "^33.4.11",
     "electron-builder": "^25.1.8",
@@ -49,6 +51,7 @@
   },
   "dependencies": {
     "@nut-tree-fork/nut-js": "^4.2.6",
+    "better-sqlite3": "^11.10.0",
     "electron-updater": "^6.3.9"
   }
 }

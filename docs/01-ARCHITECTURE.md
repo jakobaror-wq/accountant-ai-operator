@@ -41,7 +41,9 @@ accountant-ai-operator/
 │           ├── macros.ts         # מאקרו: שידור-חוזר של רצף פעולות בלי קריאת AI, לפי connector+משימה
 │           ├── window-focus.ts   # מוצא/פותח/מביא לקדמה את חלון התוכנה הנכונה לפני שהלולאה מתחילה
 │           ├── run-history.ts    # יומן ביקורת מקומי (JSON per run)
-│           └── window-reload.ts  # ניסיון חוזר אוטומטי אם טעינת ה-UI נכשלת
+│           ├── window-reload.ts  # ניסיון חוזר אוטומטי אם טעינת ה-UI נכשלת
+│           ├── safety/policy-engine.ts  # Gate 1 (2026-10-05) - riskClass→אישור, דטרמיניסטי, לא ה-AI
+│           └── db.ts             # SQLite מקומי (2026-10-06) - clients/client_facts/audit_events, ר' 05-DATA-MODEL.md §9
 └── docs/                          # המסמכים האלה
 ```
 

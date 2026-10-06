@@ -4,6 +4,7 @@ import { getConnectorCredentials } from "./settings";
 import { getMacro, saveMacro, recordMacroReplay, recordMacroFallback, MACRO_REPLAY_ENABLED, type MacroStep } from "./macros";
 import { runIdFor } from "./run-history";
 import { requiresHumanApproval, type RiskClass } from "./safety/policy-engine";
+import { appendAuditEvent } from "./db";
 
 export interface RunStepRecord {
   step: number;
@@ -200,6 +201,12 @@ export async function runComputerUseTask(params: {
   const learningEligible = !params.resumeFrom && MACRO_REPLAY_ENABLED;
 
   function finish(status: RunRecord["status"], summary?: string): void {
+    // רק מצבים סופיים נכנסים ליומן-השרשרת (לא "in-progress" - finish נקרא
+    // גם מ-checkpoint() אחרי כל צעד מוצלח, וזה היה מציף את היומן באירוע
+    // "run-finished" מזויף על כל צעד בודד, לא רק כשהריצה באמת הסתיימה).
+    if (status !== "in-progress") {
+      appendAuditEvent("run-finished", { connectorId: params.connectorId, task: params.task, startedAt, status, summary, stepCount: steps.length });
+    }
     params.onUpdate({
       type: "run-summary",
       run: {
@@ -443,6 +450,18 @@ export async function runComputerUseTask(params: {
         finish("rejected");
         return;
       }
+
+      // אושר בפועל - נכנס ליומן-השרשרת (ר' db.ts) כאירוע-בטיחות קריטי נפרד
+      // מיומן-הצעדים הרגיל: זה בדיוק הרגע שבו אדם אישר במפורש פעולה
+      // שהקוד (לא ה-AI) קבע שדורשת אישור - שווה תיעוד-נפרד שעמיד לשינוי.
+      appendAuditEvent("approval-granted", {
+        connectorId: params.connectorId,
+        task: params.task,
+        step,
+        riskClass: next.riskClass,
+        reasoning: next.reasoning,
+        action: next.action,
+      });
     }
 
     // "type_credential" הוא פעולה סמלית - הערך האמיתי (סיסמה/שם משתמש) לעולם
