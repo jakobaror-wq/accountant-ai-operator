@@ -23,6 +23,7 @@ import {
   hasConnectorCredentials,
   setConnectorCredentials,
   clearConnectorCredentials,
+  WEB_URL,
 } from "./settings";
 import { runComputerUseTask, type TaskUpdateEvent } from "./task-runner";
 import type { ComputerActionRequest } from "./ai/grok";
@@ -70,12 +71,6 @@ app.on("login", (event, _webContents, details, authInfo, callback) => {
   );
   callback();
 });
-
-/**
- * ברירת המחדל היא האתר החי ב-Vercel. אפשר לדרוס בזמן פיתוח מקומי:
- *   AIOP_WEB_URL=http://localhost:3100 npm start
- */
-const WEB_URL = process.env.AIOP_WEB_URL ?? "https://accountant-ai-operator.vercel.app";
 
 const UPDATE_CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000;
 

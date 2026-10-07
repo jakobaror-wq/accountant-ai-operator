@@ -2,6 +2,15 @@ import { app, safeStorage } from "electron";
 import path from "node:path";
 import fs from "node:fs";
 
+/**
+ * **הועבר לכאן (2026-10-07) מ-main.ts** - צריך להיות נגיש גם מ-ai/grok.ts
+ * (שעכשיו קורא לשרת שלנו במקום ישירות ל-xAI, ר' ההערה המפורטת ב-grok.ts)
+ * בלי לגרום לייבוא-מעגלי: main.ts -> task-runner.ts -> ai/grok.ts -> main.ts
+ * היה נוצר אילו WEB_URL נשאר מוגדר ב-main.ts וגם grok.ts ייבא משם. settings.ts
+ * הוא מודול-עלה (לא מייבא משום קובץ אחר בפרויקט) - מיקום בטוח ומשותף.
+ */
+export const WEB_URL = process.env.AIOP_WEB_URL ?? "https://accountant-ai-operator.vercel.app";
+
 interface ConnectorCredentials {
   username: string;
   password: string;

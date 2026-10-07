@@ -33,24 +33,20 @@ app.whenReady().then(async () => {
 
   // === Part 2: ai/grok.ts actually enforces fail-closed parsing - the model
   // can't bypass the policy by returning an invalid/missing riskClass string ===
+  // **עדכון (2026-10-07)**: grok.ts כבר לא קורא ל-xAI ישירות (net.fetch) -
+  // הוא קורא לשרת שלנו (fetch הגלובלי), שכבר מחזיר JSON שטוח (לא את מעטפת
+  // ה-chat/completions המקורית של xAI - זה נפתר בצד השרת עכשיו). המוק כאן
+  // משקף את זה.
   {
-    const electron = require("electron");
-    electron.net.fetch = async () => ({
+    globalThis.fetch = async () => ({
       ok: true,
+      status: 200,
       json: async () => ({
-        choices: [
-          {
-            message: {
-              content: JSON.stringify({
-                reasoning: "test",
-                screenLabel: "test",
-                confidence: 0.99,
-                riskClass: "safe", // NOT a real category - model inventing its own label
-                action: { type: "click", x: 1, y: 1 },
-              }),
-            },
-          },
-        ],
+        reasoning: "test",
+        screenLabel: "test",
+        confidence: 0.99,
+        riskClass: "safe", // NOT a real category - model inventing its own label
+        action: { type: "click", x: 1, y: 1 },
       }),
     });
     const grok = require(`${DIST}/ai/grok.js`);
@@ -73,23 +69,15 @@ app.whenReady().then(async () => {
 
   // === Part 3: a MISSING riskClass field entirely also fails closed ===
   {
-    const electron = require("electron");
-    electron.net.fetch = async () => ({
+    globalThis.fetch = async () => ({
       ok: true,
+      status: 200,
       json: async () => ({
-        choices: [
-          {
-            message: {
-              content: JSON.stringify({
-                reasoning: "test",
-                screenLabel: "test",
-                confidence: 0.99,
-                // riskClass omitted entirely
-                action: { type: "click", x: 1, y: 1 },
-              }),
-            },
-          },
-        ],
+        reasoning: "test",
+        screenLabel: "test",
+        confidence: 0.99,
+        // riskClass omitted entirely
+        action: { type: "click", x: 1, y: 1 },
       }),
     });
     delete require.cache[require.resolve(`${DIST}/ai/grok.js`)];
@@ -109,23 +97,15 @@ app.whenReady().then(async () => {
 
   // === Part 4: ask/done/type_credential are always forced to read-only, regardless of what the model sends ===
   {
-    const electron = require("electron");
-    electron.net.fetch = async () => ({
+    globalThis.fetch = async () => ({
       ok: true,
+      status: 200,
       json: async () => ({
-        choices: [
-          {
-            message: {
-              content: JSON.stringify({
-                reasoning: "asking a question",
-                screenLabel: "test",
-                confidence: 0.99,
-                riskClass: "final-commit", // model nonsensically claims this, should be overridden
-                action: { type: "ask", question: "which client?" },
-              }),
-            },
-          },
-        ],
+        reasoning: "asking a question",
+        screenLabel: "test",
+        confidence: 0.99,
+        riskClass: "final-commit", // model nonsensically claims this, should be overridden
+        action: { type: "ask", question: "which client?" },
       }),
     });
     delete require.cache[require.resolve(`${DIST}/ai/grok.js`)];

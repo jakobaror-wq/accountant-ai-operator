@@ -71,8 +71,10 @@ main.ts - מציג חלון-חיווי תמיד-עליון ("🤖 הסוכן פ�
    ▼
 task-runner.ts - לולאה עד MAX_STEPS=40:
    1. computer-use.ts.captureScreenshot() - צילום, מוקטן אם המסך גדול מ-1600px
-   2. ai/grok.ts.requestNextAction() - שולח היסטוריה (עד 20 צעדים אחרונים) + צילום ל-xAI,
-      מקבל reasoning + screenLabel + confidence + requiresApproval + action
+   2. ai/grok.ts.requestNextAction() - שולח היסטוריה (עד 20 צעדים אחרונים) + צילום. **עדכון
+      (2026-10-07)**: לא ישירות ל-xAI יותר (חסימת-רשת ארגונית אצל משתמש, ר' `09-COMPUTER-USE-AGENT.md`) -
+      נשלח ל-`apps/web/app/api/agent/next-action`, שמבצע את הקריאה בפועל ל-xAI מתשתית Vercel.
+      מקבל reasoning + screenLabel + confidence + riskClass + action
       (עם retry אוטומטי על תקלות רשת/שרת חולפות, לא על שגיאות מפתח API)
    3. אם action="ask" - עוצר, שואל את המשתמש, ממתין לתשובה, ממשיך
    4. אם requiresApproval=true - עוצר, מציג למשתמש לאישור/דחייה
