@@ -40,7 +40,14 @@ export interface ScreenshotResult {
  */
 const MAX_VISION_DIMENSION = 1600;
 
-export async function captureScreenshot(): Promise<ScreenshotResult> {
+/**
+ * מרכזת את צילום-המסך-הראשי הגולמי (desktopCapturer + התאמת display_id) -
+ * גם captureScreenshot (מה שה-AI רואה) וגם captureLiveFrame (התצוגה החיה,
+ * ר' live-feed.ts) חייבים להשתמש באותה לוגיקת-בחירת-מסך בדיוק, אחרת שני
+ * הנתיבים עלולים לסטות זה מזה (למשל לבחור מסך פיזי שונה בהגדרת-שני-מסכים)
+ * בלי שאף אחד ישים לב - זה לא רק כפילות-קוד, זו ערובה לעקביות.
+ */
+async function capturePrimaryDisplaySource(): Promise<{ image: Electron.NativeImage; width: number; height: number }> {
   const primaryDisplay = screen.getPrimaryDisplay();
   const { width, height } = primaryDisplay.size;
 
@@ -57,7 +64,11 @@ export async function captureScreenshot(): Promise<ScreenshotResult> {
   const source =
     sources.find((s) => s.display_id === String(primaryDisplay.id)) ?? sources[0];
 
-  const fullImage = source.thumbnail;
+  return { image: source.thumbnail, width, height };
+}
+
+export async function captureScreenshot(): Promise<ScreenshotResult> {
+  const { image: fullImage, width, height } = await capturePrimaryDisplaySource();
   const longestSide = Math.max(width, height);
   const scale = longestSide > MAX_VISION_DIMENSION ? MAX_VISION_DIMENSION / longestSide : 1;
   // מקודדים תמונה אחת בלבד (לא שתיים) - אם המסך בגודל רגיל, זו התמונה
@@ -73,6 +84,48 @@ export async function captureScreenshot(): Promise<ScreenshotResult> {
     realWidth: width,
     realHeight: height,
   };
+}
+
+/**
+ * גודל-צד-ארוך מקסימלי לתצוגה החיה (live-feed.ts) - קטן משמעותית מ-
+ * MAX_VISION_DIMENSION (1600): התצוגה בדפדפן מוצגת ברוחב של כמה מאות px
+ * בלבד, אין טעם לשדר/לקודד תמונה גדולה יותר באינטרוול תכוף. **דגל-אימות**:
+ * האם 960 נשאר חד מספיק על טקסט צפוף בתוכנת הנה"ח אמיתית לא נבדק מהסביבה
+ * הזו - אם נראה מטושטש בפועל, להעלות בהדרגה (1200, 1400).
+ */
+const LIVE_FRAME_MAX_DIMENSION = 960;
+
+/**
+ * איכות JPEG (0-100) לתצוגה החיה - לא PNG: ב-captureScreenshot דיוק פיקסלי
+ * חשוב (זו התמונה שה-AI מקבל), אבל כאן המטרה היא "להרגיש חי" בקצב גבוה
+ * (ר' LIVE_FRAME_INTERVAL_MS ב-live-feed.ts), ו-JPEG קטן/מהיר-לקידוד
+ * משמעותית מ-PNG לאותו תוכן. **דגל-אימות**: 70 הוא נקודת-איזון סבירה
+ * לתצוגה כללית, אבל טקסט צפוף/טבלאות בתוכנת הנה"ח אמיתית לא נבדקו מהסביבה
+ * הזו - אם נראה מטושטש, להעלות ל-80-85.
+ */
+const LIVE_FRAME_JPEG_QUALITY = 70;
+
+export interface LiveFrame {
+  base64Jpeg: string;
+}
+
+/**
+ * צילום עצמאי לתצוגה החיה - לא קשור כלל ללולאת-ההחלטות של ה-AI (ר'
+ * live-feed.ts לקריאה החוזרת). חולק את לוגיקת-בחירת-המסך עם captureScreenshot
+ * (capturePrimaryDisplaySource) כדי ששני הנתיבים לעולם לא יסטו, אבל מקודד
+ * קטן/JPEG במקום הגודל/הפורמט שה-AI מקבל - אלה שתי מטרות שונות לגמרי
+ * (דיוק-לקריאת-AI מול קצב-לתצוגה-אנושית) ואין סיבה שישתפו את אותם פרמטרים.
+ */
+export async function captureLiveFrame(): Promise<LiveFrame> {
+  const { image: fullImage, width, height } = await capturePrimaryDisplaySource();
+  const longestSide = Math.max(width, height);
+  const scale = longestSide > LIVE_FRAME_MAX_DIMENSION ? LIVE_FRAME_MAX_DIMENSION / longestSide : 1;
+  const image =
+    scale < 1
+      ? fullImage.resize({ width: Math.round(width * scale), height: Math.round(height * scale) })
+      : fullImage;
+
+  return { base64Jpeg: image.toJPEG(LIVE_FRAME_JPEG_QUALITY).toString("base64") };
 }
 
 /**

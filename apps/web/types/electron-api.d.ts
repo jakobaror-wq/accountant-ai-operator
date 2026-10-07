@@ -93,6 +93,17 @@ interface RunTaskResult {
   detail?: string;
 }
 
+/** ר' apps/desktop/src/live-feed.ts - ערוץ נפרד לגמרי מ-TaskUpdateEvent/
+ * aiop:task-update (תדירות גבוהה, לא נכנס ליומן-הריצות/יומן-הביקורת). */
+interface LiveFrame {
+  base64Jpeg: string;
+}
+
+interface CursorPosition {
+  x: number;
+  y: number;
+}
+
 interface ResolveDroppedPathResult {
   success: boolean;
   path?: string;
@@ -143,6 +154,10 @@ interface ElectronAPI {
   getIncompleteRun(connectorId: string): Promise<StoredRunRecord | null>;
   getAgentStatus(): Promise<AgentStatus>;
   onTaskUpdate(callback: (event: TaskUpdateEvent) => void): () => void;
+  /** תצוגה חיה (live-feed.ts) - ר' ההערה על LiveFrame למעלה: ערוץ נפרד
+   * בכוונה מ-onTaskUpdate, לא חלק מיומן-הריצות. */
+  onLiveFrame(callback: (frame: LiveFrame) => void): () => void;
+  onCursorPosition(callback: (pos: CursorPosition) => void): () => void;
 }
 
 declare global {

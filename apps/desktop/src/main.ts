@@ -31,6 +31,7 @@ import { saveRun, listRuns, getRun, findIncompleteRun } from "./run-history";
 import { getLearnedScreens, recordScreen } from "./screen-memory";
 import { isRetryableLoadFailure, nextReloadDelay } from "./window-reload";
 import { focusConnectorWindow, getConnectorDisplayName } from "./window-focus";
+import { startLiveFeed, stopLiveFeed } from "./live-feed";
 
 /**
  * **עדכון (2026-09-26) - תיקון-שורש אמיתי, לפי ראיה חיה:** משתמש דיווח על
@@ -194,6 +195,10 @@ function createWindow(): BrowserWindow {
   mainWindow = win;
   win.on("closed", () => {
     if (mainWindow === win) mainWindow = null;
+    // הגנה נוספת (לא נתיב-הניקוי העיקרי, ר' .finally() ב-aiop:run-task) -
+    // נגד אינטרוול דלוף של live-feed.ts אם האפליקציה נסגרת באמצע ריצה.
+    // אידמפוטנטי - no-op אם לא רץ כרגע.
+    stopLiveFeed();
   });
   return win;
 }
@@ -238,11 +243,18 @@ function showAgentIndicator(connectorName: string): void {
   const html = `<!doctype html>
 <html dir="rtl" lang="he"><head><meta charset="utf-8"><style>
   html,body{margin:0;height:100%;}
-  body{font-family:system-ui,sans-serif;background:#312e81;color:#fff;padding:12px 16px;box-sizing:border-box;-webkit-app-region:drag;}
+  body{font-family:system-ui,sans-serif;background:#312e81;color:#fff;padding:12px 16px;box-sizing:border-box;-webkit-app-region:drag;transition:background .3s ease;}
   .title{font-weight:600;font-size:14px;}
   .sub{font-size:12px;opacity:.85;margin-top:4px;line-height:1.4;max-height:2.8em;overflow:hidden;}
   .sub.waiting{opacity:1;color:#fde047;font-weight:600;}
   .sub.error{opacity:1;color:#fca5a5;font-weight:600;}
+  /* **עדכון**: עד עכשיו רק צבע-הטקסט השתנה במצב-המתנה - קל לפספס אם לא
+     קוראים את הטקסט בדיוק. עכשיו כל רקע-החלון עצמו משתנה ופועם, כדי
+     שמצב "ממתין לאישור שלך" יהיה בלתי-ניתן-לבלבול עם "תקוע" גם בראיה
+     פריפריאלית, בלי לקרוא מילה. */
+  body.waiting-state{background:#b45309;animation:pulse-bg 1.4s ease-in-out infinite;}
+  body.error-state{background:#991b1b;}
+  @keyframes pulse-bg{0%,100%{background-color:#b45309;}50%{background-color:#f59e0b;}}
   button{-webkit-app-region:no-drag;margin-top:8px;background:#ef4444;color:#fff;border:none;border-radius:6px;padding:6px 14px;font-size:12px;cursor:pointer;}
   button:hover{background:#dc2626;}
 </style></head><body>
@@ -254,7 +266,11 @@ function showAgentIndicator(connectorName: string): void {
     window.indicatorAPI.onStatus((text) => {
       const el = document.getElementById("status");
       el.textContent = text;
-      el.className = "sub" + (text.startsWith("⏸") || text.startsWith("❓") ? " waiting" : text.startsWith("⚠") ? " error" : "");
+      const waiting = text.startsWith("⏸") || text.startsWith("❓");
+      const isError = text.startsWith("⚠");
+      el.className = "sub" + (waiting ? " waiting" : isError ? " error" : "");
+      document.body.classList.toggle("waiting-state", waiting);
+      document.body.classList.toggle("error-state", isError);
     });
   </script>
 </body></html>`;
@@ -400,6 +416,10 @@ app.whenReady().then(() => {
       currentConnectorId = connectorId;
       currentTask = task;
       showAgentIndicator(getConnectorDisplayName(connectorId));
+      // תצוגה-חיה (live-feed.ts) ממשיכה לזרום גם בזמן waitForApproval/
+      // waitForAnswer (מחוץ ללולאת-הצעדים) - בדיוק מה שעונה על "האם זה
+      // קפוא באמת או רק ממתין לי", ר' docs/09-COMPUTER-USE-AGENT.md.
+      startLiveFeed(sender);
 
       void runComputerUseTask({
         apiKey,
@@ -458,6 +478,7 @@ app.whenReady().then(() => {
           currentConnectorId = null;
           currentTask = null;
           hideAgentIndicator();
+          stopLiveFeed();
         });
 
       return { started: true };

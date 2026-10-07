@@ -84,6 +84,13 @@ task-runner.ts - לולאה עד MAX_STEPS=40:
 עד action="done", שגיאה, דחייה, עצירה ידנית, או MAX_STEPS
    ▼
 run-history.ts שומר את הריצה המלאה - נגיש דרך /audit
+
+live-feed.ts (עדכון 2026-10-07) - קופסה **מקבילה** ללולאה למעלה, לא בתוכה:
+   מופעלת מ-main.ts מיד אחרי showAgentIndicator, רצה גם בזמן המתנה-לאישור/
+   לתשובה. שני אינטרוולים עצמאיים: צילום-JPEG-קל כל 400ms (aiop:live-frame)
+   ומיקום-עכבר כל 150ms (aiop:cursor-position) - שני ערוצי IPC נפרדים
+   לגמרי מ-aiop:task-update, לעולם לא נכנסים ליומן-הריצות/יומן-הביקורת.
+   ר' `09-COMPUTER-USE-AGENT.md` לפירוט המלא.
 ```
 
 אין Workflow Engine נפרד, אין accounting-engine דטרמיניסטי, אין Approval Package מובנה - ה-`requiresApproval` נקבע ע"י המודל עצמו לפי כללים ב-system prompt (ר' `04-TOOL-REGISTRY.md` סעיף "אכיפת אישור" לפרטים על המגבלה האמיתית כאן).

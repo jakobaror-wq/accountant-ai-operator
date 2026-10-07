@@ -94,6 +94,17 @@ export interface RunTaskResult {
   detail?: string;
 }
 
+/** ר' live-feed.ts - ערוץ נפרד לגמרי מ-TaskUpdateEvent/aiop:task-update
+ * (תדירות גבוהה, לא נכנס ליומן-הריצות/יומן-הביקורת). */
+export interface LiveFrame {
+  base64Jpeg: string;
+}
+
+export interface CursorPosition {
+  x: number;
+  y: number;
+}
+
 export interface ResolveDroppedPathResult {
   success: boolean;
   path?: string;
@@ -157,6 +168,18 @@ const electronAPI = {
     const handler = (_event: unknown, data: TaskUpdateEvent) => callback(data);
     ipcRenderer.on("aiop:task-update", handler);
     return () => ipcRenderer.removeListener("aiop:task-update", handler);
+  },
+  /** תצוגה חיה (live-feed.ts) - ר' ההערה על LiveFrame למעלה: ערוץ נפרד
+   * בכוונה מ-onTaskUpdate, לא חלק מיומן-הריצות. */
+  onLiveFrame: (callback: (frame: LiveFrame) => void): (() => void) => {
+    const handler = (_event: unknown, data: LiveFrame) => callback(data);
+    ipcRenderer.on("aiop:live-frame", handler);
+    return () => ipcRenderer.removeListener("aiop:live-frame", handler);
+  },
+  onCursorPosition: (callback: (pos: CursorPosition) => void): (() => void) => {
+    const handler = (_event: unknown, data: CursorPosition) => callback(data);
+    ipcRenderer.on("aiop:cursor-position", handler);
+    return () => ipcRenderer.removeListener("aiop:cursor-position", handler);
   },
 };
 

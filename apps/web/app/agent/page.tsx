@@ -36,6 +36,16 @@ interface PendingQuestion {
   question: string;
 }
 
+/** מיקום-קליק אחרון, לאנימציית "ריפל" קצרה על גבי התצוגה החיה - נפרד
+ * מ-cursorPos הרציף (ר' apps/desktop/src/live-feed.ts). ה-key העולה מאלץ
+ * רה-טריגר של אנימציית ה-CSS גם כשהקליק הבא נופל באותן קואורדינטות
+ * בדיוק (React לא ממחזר-רינדור אלמנט רק כי אותם props השתנו לאותו ערך). */
+interface ClickRipple {
+  x: number;
+  y: number;
+  key: number;
+}
+
 interface QueueItem {
   task: string;
   connectorId: string;
@@ -94,6 +104,14 @@ export default function AgentPage() {
   const [starting, setStarting] = useState(false);
   const [log, setLog] = useState<LogLine[]>([]);
   const [latestScreenshot, setLatestScreenshot] = useState<string | null>(null);
+  // תצוגה חיה (ר' apps/desktop/src/live-feed.ts) - עצמאית לגמרי מ-
+  // latestScreenshot (שמתעדכן רק פעם לצעד-החלטה, יכול להיות כל כמה שניות
+  // עד עשרות שניות). liveFrame/cursorPos מתעדכנים באינטרוול קבוע, בלי קשר
+  // לקצב ה-AI - זה מה שנותן תחושה של "וידאו חי", לא "מצגת שקפים".
+  const [liveFrame, setLiveFrame] = useState<string | null>(null);
+  const [cursorPos, setCursorPos] = useState<{ x: number; y: number } | null>(null);
+  const [clickRipple, setClickRipple] = useState<ClickRipple | null>(null);
+  const liveImgRef = useRef<HTMLImageElement>(null);
   const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null);
   // **עדכון (2026-10-06)**: מוצג רק כש-riskClass הוא external-side-effect
   // (ייצוא/הדפסה) - הקוד ב-main.ts מתעלם מהדגל הזה על כל קטגוריה אחרת בלי
@@ -144,6 +162,15 @@ export default function AgentPage() {
       }
     });
 
+    // תצוגה חיה - ערוצים נפרדים בכוונה מ-onTaskUpdate (ר' preload.ts),
+    // נרשמים כאן באותו useEffect עם ניקוי-מינוי משולב אחד, לא hook נפרד.
+    const unsubscribeLiveFrame = window.electronAPI.onLiveFrame((frame) => {
+      setLiveFrame(frame.base64Jpeg);
+    });
+    const unsubscribeCursor = window.electronAPI.onCursorPosition((pos) => {
+      setCursorPos(pos);
+    });
+
     const unsubscribe = window.electronAPI.onTaskUpdate((event) => {
       switch (event.type) {
         case "step-start":
@@ -153,6 +180,13 @@ export default function AgentPage() {
           setLatestScreenshot(event.base64Png);
           break;
         case "action": {
+          // "ריפל" קצר בתצוגה החיה על קליק בפועל - עצמאי מ-cursorPos הרציף
+          // (שכבר עוקב אחרי מיקום-העכבר באופן שוטף, ר' live-feed.ts) ומה-
+          // latestScreenshot הקיים; ה-x/y כאן כבר במרחב-המסך-האמיתי (אחרי
+          // scaleActionToRealScreen ב-task-runner.ts), אותו מרחב כמו cursorPos.
+          if (event.action.type === "click" || event.action.type === "double_click") {
+            setClickRipple({ x: event.action.x, y: event.action.y, key: Date.now() });
+          }
           const confidencePct = Math.round(event.confidence * 100);
           const lowConfidence = event.confidence < CONFIDENCE_WARNING_THRESHOLD ? " ⚠️" : "";
           // "source" מבחין בין החלטה חיה של ה-AI לבין שידור-חוזר ממאקרו (ר'
@@ -224,12 +258,34 @@ export default function AgentPage() {
       }
     });
 
-    return unsubscribe;
+    return () => {
+      unsubscribe();
+      unsubscribeLiveFrame();
+      unsubscribeCursor();
+    };
   }, []);
 
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [log]);
+
+  // ה"ריפל" הוא אירוע חד-פעמי וקצר (ר' ClickRipple למעלה) - לא נשאר מצב
+  // קבוע בין קליקים, אחרת זה היה נראה כמו סימון קבוע ולא כמו תגובה לקליק
+  // ספציפי.
+  useEffect(() => {
+    if (!clickRipple) return;
+    const timer = setTimeout(() => setClickRipple(null), 600);
+    return () => clearTimeout(timer);
+  }, [clickRipple]);
+
+  /** ממקם סמן על גבי התצוגה החיה כאחוזים מגודל-התמונה-האמיתי (לא פיקסלים
+   * מוחלטים) - כך שהמיקום נשאר נכון בלי קשר לגודל התצוגה בפועל בדפדפן,
+   * ובלי צורך להעביר width/height דרך ה-IPC בכלל (ר' preload.ts). */
+  function overlayPosition(x: number, y: number): { left: string; top: string } | null {
+    const img = liveImgRef.current;
+    if (!img || !img.naturalWidth || !img.naturalHeight) return null;
+    return { left: `${(x / img.naturalWidth) * 100}%`, top: `${(y / img.naturalHeight) * 100}%` };
+  }
 
   useEffect(() => {
     if (!window.electronAPI || !connectorId) return;
@@ -764,14 +820,47 @@ export default function AgentPage() {
             </div>
           )}
 
+          {liveFrame && (
+            <div className="mb-4">
+              <span className="text-xs font-medium text-slate-500">תצוגה חיה</span>
+              {/* עצמאית לגמרי מ"מה ה-AI ראה בהחלטה האחרונה" למטה - מתעדכנת
+                  באינטרוול קבוע (ר' apps/desktop/src/live-feed.ts), לא פעם
+                  לצעד-החלטה. נקודת-המצביע עוקבת ברציפות; הריפל מופיע רק
+                  רגע אחרי קליק בפועל. */}
+              <div className="relative mt-1 overflow-hidden rounded-lg border border-slate-200">
+                <img
+                  ref={liveImgRef}
+                  src={`data:image/jpeg;base64,${liveFrame}`}
+                  alt="תצוגה חיה של המסך"
+                  className="block w-full"
+                />
+                {cursorPos &&
+                  overlayPosition(cursorPos.x, cursorPos.y) && (
+                    <div
+                      className="pointer-events-none absolute h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-indigo-600 shadow"
+                      style={overlayPosition(cursorPos.x, cursorPos.y) ?? undefined}
+                    />
+                  )}
+                {clickRipple &&
+                  overlayPosition(clickRipple.x, clickRipple.y) && (
+                    <div
+                      key={clickRipple.key}
+                      className="pointer-events-none absolute h-6 w-6 -translate-x-1/2 -translate-y-1/2 animate-ping rounded-full bg-indigo-400 opacity-75"
+                      style={overlayPosition(clickRipple.x, clickRipple.y) ?? undefined}
+                    />
+                  )}
+              </div>
+            </div>
+          )}
+
           {(log.length > 0 || latestScreenshot) && (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               {latestScreenshot && (
                 <div>
-                  <span className="text-xs font-medium text-slate-500">צילום מסך אחרון</span>
+                  <span className="text-xs font-medium text-slate-500">מה ה-AI ראה בהחלטה האחרונה</span>
                   <img
                     src={`data:image/png;base64,${latestScreenshot}`}
-                    alt="צילום מסך אחרון"
+                    alt="מה ה-AI ראה בהחלטה האחרונה"
                     className="mt-1 w-full rounded-lg border border-slate-200"
                   />
                 </div>
