@@ -111,7 +111,11 @@ export default function AgentPage() {
   const [liveFrame, setLiveFrame] = useState<string | null>(null);
   const [cursorPos, setCursorPos] = useState<{ x: number; y: number } | null>(null);
   const [clickRipple, setClickRipple] = useState<ClickRipple | null>(null);
-  const liveImgRef = useRef<HTMLImageElement>(null);
+  // **תיקון**: גודל-התמונה-האמיתי נשמר ב-state (מתעדכן ב-onLoad של ה-<img>,
+  // לא דרך קריאת ref.current בזמן רינדור) - קריאת ref בתוך גוף-הרינדור
+  // (כפי שזה היה קודם) מסומנת כלא-בטוחה ע"י react-hooks/refs: ה-ref עשוי
+  // להכיל ערך לא-עדכני/לא-עקבי בין רינדורים חוזרים, בניגוד ל-state.
+  const [liveImgSize, setLiveImgSize] = useState<{ width: number; height: number } | null>(null);
   const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null);
   // **עדכון (2026-10-06)**: מוצג רק כש-riskClass הוא external-side-effect
   // (ייצוא/הדפסה) - הקוד ב-main.ts מתעלם מהדגל הזה על כל קטגוריה אחרת בלי
@@ -280,11 +284,11 @@ export default function AgentPage() {
 
   /** ממקם סמן על גבי התצוגה החיה כאחוזים מגודל-התמונה-האמיתי (לא פיקסלים
    * מוחלטים) - כך שהמיקום נשאר נכון בלי קשר לגודל התצוגה בפועל בדפדפן,
-   * ובלי צורך להעביר width/height דרך ה-IPC בכלל (ר' preload.ts). */
+   * ובלי צורך להעביר width/height דרך ה-IPC בכלל (ר' preload.ts). קורא
+   * מ-liveImgSize (state, מתעדכן ב-onLoad) ולא מ-ref - ר' ההערה למעלה. */
   function overlayPosition(x: number, y: number): { left: string; top: string } | null {
-    const img = liveImgRef.current;
-    if (!img || !img.naturalWidth || !img.naturalHeight) return null;
-    return { left: `${(x / img.naturalWidth) * 100}%`, top: `${(y / img.naturalHeight) * 100}%` };
+    if (!liveImgSize) return null;
+    return { left: `${(x / liveImgSize.width) * 100}%`, top: `${(y / liveImgSize.height) * 100}%` };
   }
 
   useEffect(() => {
@@ -497,7 +501,7 @@ export default function AgentPage() {
       <div className="mt-4 rounded-xl border border-red-300 bg-red-50 p-4">
         <h2 className="text-sm font-bold text-red-900">⚠️ לפני שימוש מול נתוני לקוח אמיתיים</h2>
         <p className="mt-1 text-sm text-red-800">
-          כל צילום מסך בכל שלב נשלח לספק ה-AI החיצוני (xAI) כדי שהוא יוכל "לראות" מה קורה - זו דרך הפעולה היחידה של סוכן מבוסס-ראייה. <strong>מדיניות השימור/עיבוד של xAI לתמונות האלה לא נבדקה ולא אושרה מול הספק</strong> - אין עדיין הסכם Zero Data Retention. עד שזה יוסדר, מומלץ להימנע משימוש מול נתוני לקוח אמיתיים (מאזנים, שכר, ת"ז) ולהסתפק בבדיקות עם נתוני-דמה.
+          כל צילום מסך בכל שלב נשלח לספק ה-AI החיצוני (xAI) כדי שהוא יוכל &quot;לראות&quot; מה קורה - זו דרך הפעולה היחידה של סוכן מבוסס-ראייה. <strong>מדיניות השימור/עיבוד של xAI לתמונות האלה לא נבדקה ולא אושרה מול הספק</strong> - אין עדיין הסכם Zero Data Retention. עד שזה יוסדר, מומלץ להימנע משימוש מול נתוני לקוח אמיתיים (מאזנים, שכר, ת&quot;ז) ולהסתפק בבדיקות עם נתוני-דמה.
           <strong> בנוסף</strong>, מעכשיו כל צילום מסך וגם מפתח ה-API עוברים (באופן זמני, לא נשמרים) דרך השרת שלנו בדרך ל-xAI - לא ישירות מהמחשב כמו קודם.
         </p>
       </div>
@@ -507,7 +511,7 @@ export default function AgentPage() {
           <h2 className="font-semibold text-amber-900">מפתח API של xAI (Grok) נדרש</h2>
           <p className="mt-1 text-sm text-amber-800">
             נשמר מוצפן על המחשב הזה בלבד. {/* עדכון 2026-10-07: הניסוח הקודם ("לא נשלח לענן שלנו") כבר לא מדויק - ר' הבאנר האדום למעלה. */}
-            בכל הרצת צעד הוא כן מועבר (לא נשמר) דרך השרת שלנו בדרך ל-xAI - ר' האזהרה למעלה.
+            בכל הרצת צעד הוא כן מועבר (לא נשמר) דרך השרת שלנו בדרך ל-xAI - ר&apos; האזהרה למעלה.
           </p>
           <div className="mt-3 flex gap-2">
             <input
@@ -837,7 +841,9 @@ export default function AgentPage() {
                   רגע אחרי קליק בפועל. */}
               <div className="relative mt-1 overflow-hidden rounded-lg border border-slate-200">
                 <img
-                  ref={liveImgRef}
+                  onLoad={(e) =>
+                    setLiveImgSize({ width: e.currentTarget.naturalWidth, height: e.currentTarget.naturalHeight })
+                  }
                   src={`data:image/jpeg;base64,${liveFrame}`}
                   alt="תצוגה חיה של המסך"
                   className="block w-full"
